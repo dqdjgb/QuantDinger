@@ -33,6 +33,77 @@ class CNStockDataSource(BaseDataSource):
 
     name = "CNStock/multi-source"
 
+    def __init__(self):
+        self._last_kline_diagnostics: List[Dict[str, Any]] = []
+
+    def _reset_kline_diagnostics(self) -> None:
+        self._last_kline_diagnostics = []
+
+    def _record_kline_source(
+        self,
+        source: str,
+        code: str,
+        timeframe: str,
+        limit: int,
+        rows: Optional[List[Dict[str, Any]]] = None,
+        error: Optional[BaseException] = None,
+    ) -> None:
+        count = len(rows or [])
+        entry: Dict[str, Any] = {"source": source, "count": count}
+        if error is not None:
+            entry["error"] = str(error)
+        self._last_kline_diagnostics.append(entry)
+        if error is not None:
+            logger.warning(
+                "CNStock K-line source %s failed for %s tf=%s limit=%s: %s",
+                source, code, timeframe, limit, error,
+            )
+        else:
+            logger.info(
+                "CNStock K-line source %s returned %d bars for %s tf=%s limit=%s",
+                source, count, code, timeframe, limit,
+            )
+
+    def _fetch_kline_source(
+        self,
+        source: str,
+        code: str,
+        timeframe: str,
+        limit: int,
+        fetcher: Any,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
+        try:
+            rows = fetcher(**kwargs) or []
+            self._record_kline_source(source, code, timeframe, limit, rows=rows)
+            return rows
+        except Exception as e:
+            self._record_kline_source(source, code, timeframe, limit, rows=[], error=e)
+            return []
+
+    def get_last_kline_diagnostics(self) -> List[Dict[str, Any]]:
+        return list(self._last_kline_diagnostics)
+
+    def format_last_kline_diagnostics(self) -> str:
+        parts = []
+        for item in self._last_kline_diagnostics:
+            source = item.get("source", "unknown")
+            count = item.get("count", 0)
+            err = item.get("error")
+            if err:
+                parts.append(f"{source}=error:{err}")
+            else:
+                parts.append(f"{source}={count}")
+        return ", ".join(parts)
+
+    @staticmethod
+    def _has_enough_kline_rows(rows: List[Dict[str, Any]], limit: int) -> bool:
+        if not rows:
+            return False
+        if int(limit or 0) <= 1:
+            return True
+        return len(rows) >= 2
+
     def get_ticker(self, symbol: str) -> Dict[str, Any]:
         code = normalize_cn_code(symbol)
         parts = fetch_quote(code)
@@ -62,12 +133,18 @@ class CNStockDataSource(BaseDataSource):
         code = normalize_cn_code(symbol)
         tf = normalize_chart_timeframe(timeframe)
         lim = max(int(limit or 300), 1)
+        self._reset_kline_diagnostics()
 
         # Tier 1: Twelve Data (paid, most reliable)
-        rows = fetch_twelvedata_klines(
+        rows = self._fetch_kline_source(
+            "TwelveData",
+            code,
+            tf,
+            lim,
+            fetch_twelvedata_klines,
             is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
         )
-        if rows:
+        if self._has_enough_kline_rows(rows, lim):
             return self.filter_and_limit(
                 rows,
                 limit=lim,
@@ -80,9 +157,17 @@ class CNStockDataSource(BaseDataSource):
         if tf in ("1D", "1W"):
             tf_map = {"1D": "day", "1W": "week"}
             period = tf_map.get(tf, "day")
-            raw_rows = fetch_kline(code, period=period, count=lim, adj="qfq")
+            raw_rows = self._fetch_kline_source(
+                "Tencent",
+                code,
+                tf,
+                lim,
+                fetch_kline,
+                code=code, period=period, count=lim, adj="qfq",
+            )
             out = tencent_kline_rows_to_dicts(raw_rows)
-            if out:
+            self._record_kline_source("TencentParsed", code, tf, lim, rows=out)
+            if self._has_enough_kline_rows(out, lim):
                 return self.filter_and_limit(
                     out,
                     limit=lim,
@@ -93,10 +178,15 @@ class CNStockDataSource(BaseDataSource):
 
         # Tier 3: Eastmoney direct minute/hour K-lines for A-shares.
         if tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
-            rows = fetch_eastmoney_minute_klines(
+            rows = self._fetch_kline_source(
+                "Eastmoney",
+                code,
+                tf,
+                lim,
+                fetch_eastmoney_minute_klines,
                 is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
             )
-            if rows:
+            if self._has_enough_kline_rows(rows, lim):
                 return self.filter_and_limit(
                     rows,
                     limit=lim,
@@ -106,10 +196,15 @@ class CNStockDataSource(BaseDataSource):
                 )
 
         # Tier 4: yfinance (works when Yahoo not rate-limited)
-        rows = fetch_yfinance_klines(
+        rows = self._fetch_kline_source(
+            "yfinance",
+            code,
+            tf,
+            lim,
+            fetch_yfinance_klines,
             is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
         )
-        if rows:
+        if self._has_enough_kline_rows(rows, lim):
             return self.filter_and_limit(
                 rows,
                 limit=lim,
@@ -120,15 +215,26 @@ class CNStockDataSource(BaseDataSource):
 
         # Tier 5: AkShare (fragile overseas, last resort)
         if tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
-            rows = fetch_akshare_minute_klines(
+            rows = self._fetch_kline_source(
+                "AkShare",
+                code,
+                tf,
+                lim,
+                fetch_akshare_minute_klines,
                 is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
             )
         elif tf == "1W":
-            rows = fetch_akshare_weekly_klines(
+            rows = self._fetch_kline_source(
+                "AkShareWeekly",
+                code,
+                tf,
+                lim,
+                fetch_akshare_weekly_klines,
                 is_hk=False, tencent_code=code, limit=lim, before_time=before_time
             )
         else:
             rows = []
+            self._record_kline_source("AkShareSkipped", code, tf, lim, rows=rows)
 
         return self.filter_and_limit(
             rows,

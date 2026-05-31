@@ -301,6 +301,9 @@ class EmailService:
         elif code_type == 'login':
             subject = 'QuantDinger - Quick Login Verification Code'
             action_text = 'log in to your account'
+        elif code_type == 'password_login_2fa':
+            subject = 'QuantDinger - Password Login Verification Code'
+            action_text = 'complete your password login'
         elif code_type == 'reset_password':
             subject = 'QuantDinger - Password Reset Verification Code'
             action_text = 'reset your password'

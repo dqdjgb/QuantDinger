@@ -320,6 +320,14 @@ def login():
                 }
             })
 
+        security.log_security_event('login_blocked', user.get('id'), ip_address, user_agent,
+                                   {'reason': 'password_login_requires_email_2fa'})
+        return jsonify({
+            'code': 0,
+            'msg': 'Password login requires email verification. Please bind an email address before using password login.',
+            'data': {'requires_email': True}
+        }), 403
+
         user_id = user.get('id') or user.get('user_id', 1)
         try:
             from app.services.user_service import get_user_service

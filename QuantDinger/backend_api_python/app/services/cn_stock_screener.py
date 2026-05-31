@@ -23,6 +23,7 @@ DEFAULT_FEEDBACK_DAYS = 30
 MAX_CANDIDATE_LIMIT = 80
 MAX_TOP_N = 30
 MAX_AI_TOP_N = 10
+DEFAULT_ENRICHMENT_TOP_N = 20
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -118,6 +119,10 @@ class CNStockScreenerService:
                 skipped.append({"symbol": symbol, "name": candidate.get("name") or "", "reason": str(exc)})
 
         items.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
+        if bool(factors.get("include_enrichment")):
+            self.apply_market_enrichment(items[:max(top_n, ai_top_n, DEFAULT_ENRICHMENT_TOP_N)])
+            items.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
+
         ai_targets = items[:ai_top_n]
         for item in ai_targets:
             self.apply_ai_analysis(item=item, timeframe=tf, user_id=user_id)
@@ -307,6 +312,36 @@ class CNStockScreenerService:
             "ai_summary": "",
             "ai_reasons": [],
         }
+
+    def apply_market_enrichment(self, items: List[Dict[str, Any]]) -> None:
+        """Add A-share direct data factors to already promising candidates."""
+        try:
+            from app.data_sources.cn_stock_enrichment import fetch_enrichment_bundle, score_enrichment
+        except Exception as exc:
+            logger.debug("CNStock enrichment module unavailable: %s", exc)
+            return
+
+        for item in items:
+            symbol = item.get("symbol")
+            if not symbol:
+                continue
+            try:
+                enrichment = fetch_enrichment_bundle(symbol, name=item.get("name") or "", include_news=False)
+                score_info = score_enrichment(enrichment)
+                delta = _to_float(score_info.get("score"), 0.0)
+                if delta:
+                    item["score"] = round(_clamp(_to_float(item.get("score"), 0) + delta, 0, 100), 2)
+                    item["rule_score"] = round(_clamp(_to_float(item.get("rule_score"), 0) + delta, 0, 100), 2)
+                item["market_enrichment"] = enrichment
+                item["enrichment_score"] = delta
+                item.setdefault("factor_breakdown", []).append({
+                    "key": "cnstock_enrichment",
+                    "score": round(delta, 2),
+                    "reason": "；".join(score_info.get("reasons") or []) or "A股资金面/估值增强数据",
+                })
+            except Exception as exc:
+                logger.debug("CNStock market enrichment failed for %s: %s", symbol, exc)
+                item.setdefault("risk_tags", []).append("market_enrichment_failed")
 
     def apply_ai_analysis(self, *, item: Dict[str, Any], timeframe: str, user_id: int) -> None:
         """Enrich one item with existing FastAnalysisService output."""

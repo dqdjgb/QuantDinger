@@ -37,6 +37,8 @@ def run_screener():
     """Run rule-first CNStock screening with optional AI enrichment."""
     try:
         data = request.get_json() or {}
+        factors = data.get("factors") if isinstance(data.get("factors"), dict) else {}
+        factors.setdefault("include_enrichment", bool(data.get("include_enrichment", True)))
         service = get_cn_stock_screener_service()
         result = service.run(
             user_id=int(g.user_id),
@@ -45,7 +47,7 @@ def run_screener():
             top_n=_int_payload(data, "top_n", 10),
             ai_top_n=_int_payload(data, "ai_top_n", 5),
             strategy_feedback_days=_int_payload(data, "strategy_feedback_days", 30),
-            factors=data.get("factors") if isinstance(data.get("factors"), dict) else {},
+            factors=factors,
         )
         return jsonify({"code": 1, "msg": "success", "data": result})
     except Exception as exc:

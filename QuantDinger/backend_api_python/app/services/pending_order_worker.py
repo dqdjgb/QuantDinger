@@ -217,10 +217,11 @@ class PendingOrderWorker:
             try:
                 sc = load_strategy_configs(int(sid))
                 exec_mode = (sc.get("execution_mode") or "").strip().lower()
-                # 修改：即使signal模式，如果指定了target_strategy_id（策略启动时调用），也要同步
-                # 这样可以清理用户在交易所手动平仓但数据库记录还在的"幽灵持仓"
-                if exec_mode != "live" and not target_strategy_id:
-                    logger.debug(f"[PositionSync] Strategy {sid} skipped: execution_mode='{exec_mode}' (needs 'live' or explicit target)")
+                # Position sync touches private trading APIs and may auto-stop on
+                # fatal broker/auth errors. Keep it live-only so cloud signal/paper
+                # strategies are not stopped by unavailable local broker gateways.
+                if exec_mode != "live":
+                    logger.debug(f"[PositionSync] Strategy {sid} skipped: execution_mode='{exec_mode}' (position sync is live-only)")
                     continue
                 sync_user_id = int(sc.get("user_id") or 1)
                 exchange_config = resolve_exchange_config(sc.get("exchange_config") or {}, user_id=sync_user_id)

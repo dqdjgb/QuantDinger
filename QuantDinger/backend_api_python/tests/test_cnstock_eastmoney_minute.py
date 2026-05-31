@@ -28,7 +28,10 @@ def test_eastmoney_kline_rows_parse_to_standard_bars():
 
 def test_cnstock_15m_uses_eastmoney_before_yfinance_or_akshare(monkeypatch):
     calls = []
-    expected = [{"time": 100, "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10}]
+    expected = [
+        {"time": 100, "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10},
+        {"time": 200, "open": 2, "high": 3, "low": 1.5, "close": 2.5, "volume": 20},
+    ]
 
     monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
 
@@ -39,10 +42,14 @@ def test_cnstock_15m_uses_eastmoney_before_yfinance_or_akshare(monkeypatch):
     def forbidden_yfinance(**kwargs):
         raise AssertionError("yfinance should not be called when Eastmoney has data")
 
+    def forbidden_yahoo_chart(**kwargs):
+        raise AssertionError("Yahoo chart should not be called when Eastmoney has data")
+
     def forbidden_akshare(**kwargs):
         raise AssertionError("AkShare should not be called when Eastmoney has data")
 
     monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", eastmoney)
+    monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", forbidden_yahoo_chart)
     monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", forbidden_yfinance)
     monkeypatch.setattr(cn_stock, "fetch_akshare_minute_klines", forbidden_akshare)
 
@@ -58,13 +65,36 @@ def test_cnstock_minute_falls_back_to_yfinance_then_akshare(monkeypatch):
 
     monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
     monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or [])
+    monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", lambda **kwargs: calls.append("yahoo") or [])
     monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", lambda **kwargs: calls.append("yfinance") or [])
     monkeypatch.setattr(cn_stock, "fetch_akshare_minute_klines", lambda **kwargs: calls.append("akshare") or fallback)
 
     rows = CNStockDataSource().get_kline("603618", "15m", 20)
 
     assert rows == fallback
-    assert calls == ["eastmoney", "yfinance", "akshare"]
+    assert calls == ["eastmoney", "yahoo", "yfinance", "akshare"]
+
+
+def test_cnstock_minute_uses_yahoo_chart_before_yfinance(monkeypatch):
+    calls = []
+    fallback = [
+        {"time": 200, "open": 3, "high": 4, "low": 2, "close": 3.5, "volume": 20},
+        {"time": 300, "open": 3.5, "high": 5, "low": 3, "close": 4, "volume": 30},
+    ]
+
+    monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
+    monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or [])
+    monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", lambda **kwargs: calls.append("yahoo") or fallback)
+
+    def forbidden_yfinance(**kwargs):
+        raise AssertionError("yfinance should not be called when Yahoo chart has data")
+
+    monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", forbidden_yfinance)
+
+    rows = CNStockDataSource().get_kline("603618", "15m", 20)
+
+    assert rows == fallback
+    assert calls == ["eastmoney", "yahoo"]
 
 
 def test_cnstock_minute_falls_back_when_source_has_only_one_bar(monkeypatch):
@@ -77,13 +107,14 @@ def test_cnstock_minute_falls_back_when_source_has_only_one_bar(monkeypatch):
 
     monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
     monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or one_bar)
+    monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", lambda **kwargs: calls.append("yahoo") or [])
     monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", lambda **kwargs: calls.append("yfinance") or fallback)
     monkeypatch.setattr(cn_stock, "fetch_akshare_minute_klines", lambda **kwargs: calls.append("akshare") or [])
 
     rows = CNStockDataSource().get_kline("603618", "15m", 20)
 
     assert rows == fallback
-    assert calls == ["eastmoney", "yfinance"]
+    assert calls == ["eastmoney", "yahoo", "yfinance"]
 
 
 def test_eastmoney_three_minute_bars_merge_one_minute_response(monkeypatch):

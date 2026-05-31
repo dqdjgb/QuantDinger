@@ -1175,18 +1175,19 @@ class TradingExecutor:
                 return
 
             # ============================================
-            # 启动时：同步持仓状态，清理"幽灵持仓"
+            # 启动时：实盘策略同步持仓状态，清理"幽灵持仓"
             # ============================================
-            # 即使信号模式下，也要在启动时检查并清理用户在交易所手动平仓但数据库记录还在的情况
-            # 这样可以避免策略认为还有持仓而无法执行新的开仓信号
+            # 云服务器上的 signal/paper 策略不能触发私有交易接口检查；否则本地券商
+            # 网关不可达或 API key/IP 白名单问题会把只发信号的策略误判为致命错误。
             try:
                 logger.info(f"策略 {strategy_id} 启动时检查持仓同步...")
-                # 调用持仓同步逻辑（即使signal模式也要检查）
+                # 只对 live 模式调用持仓同步逻辑。
                 from app import get_pending_order_worker
                 worker = get_pending_order_worker()
                 if worker and hasattr(worker, '_sync_positions_best_effort'):
-                    worker._sync_positions_best_effort(target_strategy_id=strategy_id)
-                    logger.info(f"策略 {strategy_id} 启动时持仓同步完成")
+                    if execution_mode == "live":
+                        worker._sync_positions_best_effort(target_strategy_id=strategy_id)
+                        logger.info(f"策略 {strategy_id} 启动时持仓同步完成")
             except Exception as e:
                 logger.warning(f"策略 {strategy_id} 启动时持仓同步失败（不影响启动）: {e}")
 
@@ -2076,6 +2077,10 @@ class TradingExecutor:
         diagnostics = ""
 
         for attempt in range(1, attempts + 1):
+            try:
+                self._last_kline_fetch_error = ""
+            except Exception:
+                pass
             last_klines = self._fetch_latest_kline(
                 symbol,
                 timeframe,
@@ -2085,6 +2090,9 @@ class TradingExecutor:
                 market_type=market_type,
             )
             diagnostics = self._format_kline_fetch_diagnostics(market_category)
+            last_fetch_error = str(getattr(self, "_last_kline_fetch_error", "") or "")
+            if not diagnostics and last_fetch_error:
+                diagnostics = f"fetch_error={last_fetch_error}"
             if last_klines and len(last_klines) >= 2:
                 if attempt > 1:
                     logger.info(
@@ -2110,6 +2118,8 @@ class TradingExecutor:
                 if retry_delay > 0:
                     time.sleep(retry_delay)
 
+        if not diagnostics and (market_category or "").strip() == "CNStock":
+            diagnostics = "no CNStock data source diagnostics were recorded"
         return last_klines or [], attempts, diagnostics
 
     @staticmethod
@@ -2148,7 +2158,7 @@ class TradingExecutor:
         """
         try:
             # 使用 KlineService 获取K线数据（自动处理缓存）
-            return self.kline_service.get_kline(
+            rows = self.kline_service.get_kline(
                 market=market_category,
                 symbol=symbol,
                 timeframe=timeframe,
@@ -2157,7 +2167,17 @@ class TradingExecutor:
                 exchange_id=exchange_id,
                 market_type=market_type,
             )
+            if not rows and self._is_cnstock_intraday_timeframe(market_category, timeframe):
+                logger.warning(
+                    "CNStock intraday K-line fetch returned 0 rows for %s tf=%s limit=%s",
+                    symbol, timeframe, limit,
+                )
+            return rows
         except Exception as e:
+            try:
+                self._last_kline_fetch_error = str(e)
+            except Exception:
+                pass
             logger.error(f"Failed to fetch K-lines for {market_category}:{symbol}: {str(e)}")
             return []
     

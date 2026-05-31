@@ -85,3 +85,48 @@ def test_kline_fetch_failure_reason_includes_attempts_and_diagnostics():
     assert "limit=500" in reason
     assert "attempts=3" in reason
     assert "Eastmoney=0" in reason
+
+
+def test_cnstock_initial_kline_uses_fetch_error_when_diagnostics_empty(monkeypatch):
+    executor = _executor_without_init()
+
+    monkeypatch.setenv("CNSTOCK_INITIAL_KLINE_RETRIES", "1")
+    monkeypatch.setattr(executor, "_format_kline_fetch_diagnostics", lambda market_category: "")
+
+    def fake_fetch_latest_kline(*args, **kwargs):
+        executor._last_kline_fetch_error = "boom"
+        return []
+
+    monkeypatch.setattr(executor, "_fetch_latest_kline", fake_fetch_latest_kline)
+
+    rows, attempts, diagnostics = executor._fetch_initial_kline_with_retries(
+        42,
+        "603618",
+        "1H",
+        limit=500,
+        market_category="CNStock",
+    )
+
+    assert rows == []
+    assert attempts == 1
+    assert diagnostics == "fetch_error=boom"
+
+
+def test_cnstock_initial_kline_records_missing_diagnostics(monkeypatch):
+    executor = _executor_without_init()
+
+    monkeypatch.setenv("CNSTOCK_INITIAL_KLINE_RETRIES", "1")
+    monkeypatch.setattr(executor, "_format_kline_fetch_diagnostics", lambda market_category: "")
+    monkeypatch.setattr(executor, "_fetch_latest_kline", lambda *args, **kwargs: [])
+
+    rows, attempts, diagnostics = executor._fetch_initial_kline_with_retries(
+        42,
+        "603618",
+        "1H",
+        limit=500,
+        market_category="CNStock",
+    )
+
+    assert rows == []
+    assert attempts == 1
+    assert diagnostics == "no CNStock data source diagnostics were recorded"

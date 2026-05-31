@@ -420,6 +420,103 @@ def fetch_yfinance_klines(
     return bars
 
 
+def fetch_yahoo_chart_klines(
+    *,
+    is_hk: bool,
+    tencent_code: str,
+    timeframe: str,
+    limit: int,
+    before_time: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Fetch K-lines from Yahoo's chart HTTP endpoint without the yfinance package."""
+    interval = _YF_INTERVAL_MAP.get(timeframe)
+    if not interval:
+        return []
+
+    yf_sym = yf_symbol_from_tencent(tencent_code, is_hk)
+    merge_factor = _MERGE_FACTOR_MAP.get(timeframe, 1)
+    effective_limit = max(int(limit or 300), 1) * merge_factor
+    days_func = _YF_DAYS_MAP.get(timeframe, lambda x: x + 10)
+    days = days_func(effective_limit)
+    end = datetime.fromtimestamp(int(before_time)) if before_time else datetime.now()
+    start = end - timedelta(days=days)
+
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yf_sym}"
+    params = {
+        "period1": str(int(start.timestamp())),
+        "period2": str(int((end + timedelta(days=1)).timestamp())),
+        "interval": interval,
+        "events": "history",
+        "includePrePost": "false",
+    }
+    headers = get_request_headers("https://finance.yahoo.com/")
+
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=20)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            if attempt + 1 < _MAX_ATTEMPTS and _is_transient(e):
+                delay = min(_BACKOFF_CAP_SEC, _BACKOFF_BASE_SEC * (2 ** attempt))
+                logger.debug(
+                    "Yahoo chart transient error %s tf=%s (attempt %s/%s): %s",
+                    yf_sym, timeframe, attempt + 1, _MAX_ATTEMPTS, e,
+                )
+                time.sleep(delay)
+                continue
+            logger.warning("Yahoo chart K-line failed %s tf=%s: %s", yf_sym, timeframe, e)
+            return []
+    else:
+        return []
+
+    result = ((data or {}).get("chart") or {}).get("result") or []
+    if not result:
+        err = ((data or {}).get("chart") or {}).get("error")
+        if err:
+            logger.warning("Yahoo chart returned no result for %s tf=%s: %s", yf_sym, timeframe, err)
+        return []
+
+    payload = result[0] or {}
+    timestamps = payload.get("timestamp") or []
+    quote = (((payload.get("indicators") or {}).get("quote") or [{}])[0]) or {}
+    opens = quote.get("open") or []
+    highs = quote.get("high") or []
+    lows = quote.get("low") or []
+    closes = quote.get("close") or []
+    volumes = quote.get("volume") or []
+
+    out: List[Dict[str, Any]] = []
+    for i, ts in enumerate(timestamps):
+        try:
+            o = opens[i]
+            h = highs[i]
+            low = lows[i]
+            c = closes[i]
+            if o is None or h is None or low is None or c is None:
+                continue
+            v = volumes[i] if i < len(volumes) and volumes[i] is not None else 0
+            if float(o) == 0 and float(c) == 0:
+                continue
+            out.append({
+                "time": int(ts),
+                "open": round(float(o), 4),
+                "high": round(float(h), 4),
+                "low": round(float(low), 4),
+                "close": round(float(c), 4),
+                "volume": round(float(v), 2),
+            })
+        except Exception:
+            continue
+
+    out.sort(key=lambda x: x["time"])
+    if merge_factor > 1 and out:
+        out = _merge_every_n_sorted_bars(out, merge_factor)
+    logger.debug("Yahoo chart returned %d bars for %s tf=%s", len(out), yf_sym, timeframe)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # AkShare helpers (Eastmoney — unreliable from overseas, used as last resort)
 # ---------------------------------------------------------------------------

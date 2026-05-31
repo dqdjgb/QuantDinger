@@ -23,7 +23,8 @@ DEFAULT_FEEDBACK_DAYS = 30
 MAX_CANDIDATE_LIMIT = 80
 MAX_TOP_N = 30
 MAX_AI_TOP_N = 10
-DEFAULT_ENRICHMENT_TOP_N = 20
+DEFAULT_ENRICHMENT_TOP_N = 3
+MAX_ENRICHMENT_TOP_N = 5
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -120,7 +121,13 @@ class CNStockScreenerService:
 
         items.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
         if bool(factors.get("include_enrichment")):
-            self.apply_market_enrichment(items[:max(top_n, ai_top_n, DEFAULT_ENRICHMENT_TOP_N)])
+            enrichment_top_n = _clamp(
+                _to_float(factors.get("enrichment_top_n"), DEFAULT_ENRICHMENT_TOP_N),
+                0,
+                MAX_ENRICHMENT_TOP_N,
+            )
+            if enrichment_top_n > 0:
+                self.apply_market_enrichment(items[:int(enrichment_top_n)])
             items.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
 
         ai_targets = items[:ai_top_n]

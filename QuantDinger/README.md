@@ -552,9 +552,10 @@ For the full developer workflow, see:
 
 - [Strategy Development Guide](docs/STRATEGY_DEV_GUIDE.md)
 - [Cross-Sectional Strategy Guide](docs/CROSS_SECTIONAL_STRATEGY_GUIDE_EN.md)
+- [Built-in Classic Strategy Pack](docs/BUILTIN_CLASSIC_STRATEGIES.md)
 - [Strategy Examples](docs/examples/)
 
-The example scripts live in `docs/examples/` and are kept aligned with the current strategy development guides.
+The built-in pack is seeded into new user workspaces. The example scripts live in `docs/examples/` and are kept aligned with the current strategy development guides.
 
 ## Repository Layout
 
@@ -603,7 +604,7 @@ Use `backend_api_python/env.example` as the primary template. Key areas include:
 | [Multi-user](docs/multi-user-setup.md) | Postgres multi-tenant patterns |
 | [Agent environment](docs/agent/AGENT_ENVIRONMENT_DESIGN.md) · [AI integration](docs/agent/AI_INTEGRATION_DESIGN.md) · [Quickstart](docs/agent/AGENT_QUICKSTART.md) · [OpenAPI](docs/agent/agent-openapi.json) · [MCP server](mcp_server/README.md) | Coding agents & MCP (`quantdinger-mcp` on PyPI) |
 
-**Strategy:** [EN](docs/STRATEGY_DEV_GUIDE.md) · [CN](docs/STRATEGY_DEV_GUIDE_CN.md) · [TW](docs/STRATEGY_DEV_GUIDE_TW.md) · [JA](docs/STRATEGY_DEV_GUIDE_JA.md) · [KO](docs/STRATEGY_DEV_GUIDE_KO.md) · [Cross-sectional EN](docs/CROSS_SECTIONAL_STRATEGY_GUIDE_EN.md) / [CN](docs/CROSS_SECTIONAL_STRATEGY_GUIDE_CN.md) · [Examples](docs/examples/)
+**Strategy:** [EN](docs/STRATEGY_DEV_GUIDE.md) · [CN](docs/STRATEGY_DEV_GUIDE_CN.md) · [TW](docs/STRATEGY_DEV_GUIDE_TW.md) · [JA](docs/STRATEGY_DEV_GUIDE_JA.md) · [KO](docs/STRATEGY_DEV_GUIDE_KO.md) · [Cross-sectional EN](docs/CROSS_SECTIONAL_STRATEGY_GUIDE_EN.md) / [CN](docs/CROSS_SECTIONAL_STRATEGY_GUIDE_CN.md) · [Built-in Classic Pack](docs/BUILTIN_CLASSIC_STRATEGIES.md) · [Examples](docs/examples/)
 
 **Integrations & alerts:** [IBKR](docs/IBKR_TRADING_GUIDE_EN.md) · [MT5 EN](docs/MT5_TRADING_GUIDE_EN.md) / [CN](docs/MT5_TRADING_GUIDE_CN.md) · [OAuth EN](docs/OAUTH_CONFIG_EN.md) / [CN](docs/OAUTH_CONFIG_CN.md) · Telegram / Email / SMS configs under [`docs/`](docs/) (`NOTIFICATION_*`).
 

@@ -416,7 +416,7 @@
     <!-- Password Login 2FA Modal -->
     <a-modal
       v-model="showPassword2faModal"
-      :title="$t('user.login.twoFactorTitle') || 'Security Verification'"
+      :title="$t('user.login.twoFactorTitle') || 'Email Verification'"
       :confirmLoading="password2faLoading"
       :okText="$t('user.login.verifyAndLogin') || 'Verify and Login'"
       :cancelText="$t('user.resetPassword.back') || 'Back'"
@@ -426,7 +426,7 @@
     >
       <a-alert v-if="password2faError" type="error" showIcon style="margin-bottom: 16px;" :message="password2faError" />
       <p class="two-factor-tip">
-        {{ $t('user.login.twoFactorSent') || 'A verification code has been sent to' }}
+        {{ $t('user.login.twoFactorSent') || 'Password verified. Enter the email code sent to' }}
         <strong>{{ password2faEmailMasked }}</strong>
       </p>
       <a-form class="auth-form" :form="password2faForm">

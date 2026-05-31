@@ -3,6 +3,7 @@
 """
 from flask import Blueprint, jsonify
 from datetime import datetime, timezone
+from app._version import APP_VERSION
 
 health_bp = Blueprint('health', __name__)
 
@@ -12,7 +13,7 @@ def index():
     """API 首页"""
     return jsonify({
         'name': 'QuantDinger Python API',
-        'version': '2.0.0',
+        'version': APP_VERSION,
         'status': 'running',
         # SafeJSONProvider serializes datetimes as UTC ISO (with Z).
         'timestamp': datetime.now(timezone.utc)

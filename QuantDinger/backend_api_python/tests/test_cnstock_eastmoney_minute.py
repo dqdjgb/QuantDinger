@@ -26,7 +26,7 @@ def test_eastmoney_kline_rows_parse_to_standard_bars():
     assert bars[0]["time"] < bars[1]["time"]
 
 
-def test_cnstock_15m_uses_eastmoney_before_yfinance_or_akshare(monkeypatch):
+def test_cnstock_15m_uses_tencent_minute_before_eastmoney(monkeypatch):
     calls = []
     expected = [
         {"time": 100, "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10},
@@ -35,20 +35,24 @@ def test_cnstock_15m_uses_eastmoney_before_yfinance_or_akshare(monkeypatch):
 
     monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
 
-    def eastmoney(**kwargs):
-        calls.append(("eastmoney", kwargs["timeframe"], kwargs["tencent_code"]))
+    def tencent(**kwargs):
+        calls.append(("tencent", kwargs["timeframe"], kwargs["tencent_code"]))
         return expected
 
-    def forbidden_yfinance(**kwargs):
-        raise AssertionError("yfinance should not be called when Eastmoney has data")
+    def forbidden_eastmoney(**kwargs):
+        raise AssertionError("Eastmoney should not be called when Tencent minute has data")
 
     def forbidden_yahoo_chart(**kwargs):
-        raise AssertionError("Yahoo chart should not be called when Eastmoney has data")
+        raise AssertionError("Yahoo chart should not be called when Tencent minute has data")
+
+    def forbidden_yfinance(**kwargs):
+        raise AssertionError("yfinance should not be called when Tencent minute has data")
 
     def forbidden_akshare(**kwargs):
-        raise AssertionError("AkShare should not be called when Eastmoney has data")
+        raise AssertionError("AkShare should not be called when Tencent minute has data")
 
-    monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", eastmoney)
+    monkeypatch.setattr(cn_stock, "fetch_tencent_minute_klines", tencent)
+    monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", forbidden_eastmoney)
     monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", forbidden_yahoo_chart)
     monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", forbidden_yfinance)
     monkeypatch.setattr(cn_stock, "fetch_akshare_minute_klines", forbidden_akshare)
@@ -56,7 +60,25 @@ def test_cnstock_15m_uses_eastmoney_before_yfinance_or_akshare(monkeypatch):
     rows = CNStockDataSource().get_kline("603618", "15m", 20)
 
     assert rows == expected
-    assert calls == [("eastmoney", "15m", "SH603618")]
+    assert calls == [("tencent", "15m", "SH603618")]
+
+
+def test_cnstock_minute_falls_back_to_eastmoney(monkeypatch):
+    calls = []
+    expected = [
+        {"time": 100, "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10},
+        {"time": 200, "open": 2, "high": 3, "low": 1.5, "close": 2.5, "volume": 20},
+    ]
+
+    monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
+    monkeypatch.setattr(cn_stock, "fetch_tencent_minute_klines", lambda **kwargs: calls.append("tencent") or [])
+    monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or expected)
+    monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", lambda **kwargs: calls.append("yahoo") or [])
+
+    rows = CNStockDataSource().get_kline("603618", "15m", 20)
+
+    assert rows == expected
+    assert calls == ["tencent", "eastmoney"]
 
 
 def test_cnstock_minute_falls_back_to_yfinance_then_akshare(monkeypatch):
@@ -64,6 +86,7 @@ def test_cnstock_minute_falls_back_to_yfinance_then_akshare(monkeypatch):
     fallback = [{"time": 200, "open": 3, "high": 4, "low": 2, "close": 3.5, "volume": 20}]
 
     monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
+    monkeypatch.setattr(cn_stock, "fetch_tencent_minute_klines", lambda **kwargs: calls.append("tencent") or [])
     monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or [])
     monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", lambda **kwargs: calls.append("yahoo") or [])
     monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", lambda **kwargs: calls.append("yfinance") or [])
@@ -72,7 +95,7 @@ def test_cnstock_minute_falls_back_to_yfinance_then_akshare(monkeypatch):
     rows = CNStockDataSource().get_kline("603618", "15m", 20)
 
     assert rows == fallback
-    assert calls == ["eastmoney", "yahoo", "yfinance", "akshare"]
+    assert calls == ["tencent", "eastmoney", "yahoo", "yfinance", "akshare"]
 
 
 def test_cnstock_minute_uses_yahoo_chart_before_yfinance(monkeypatch):
@@ -83,6 +106,7 @@ def test_cnstock_minute_uses_yahoo_chart_before_yfinance(monkeypatch):
     ]
 
     monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
+    monkeypatch.setattr(cn_stock, "fetch_tencent_minute_klines", lambda **kwargs: calls.append("tencent") or [])
     monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or [])
     monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", lambda **kwargs: calls.append("yahoo") or fallback)
 
@@ -94,7 +118,7 @@ def test_cnstock_minute_uses_yahoo_chart_before_yfinance(monkeypatch):
     rows = CNStockDataSource().get_kline("603618", "15m", 20)
 
     assert rows == fallback
-    assert calls == ["eastmoney", "yahoo"]
+    assert calls == ["tencent", "eastmoney", "yahoo"]
 
 
 def test_cnstock_minute_falls_back_when_source_has_only_one_bar(monkeypatch):
@@ -106,6 +130,7 @@ def test_cnstock_minute_falls_back_when_source_has_only_one_bar(monkeypatch):
     ]
 
     monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
+    monkeypatch.setattr(cn_stock, "fetch_tencent_minute_klines", lambda **kwargs: calls.append("tencent") or [])
     monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or one_bar)
     monkeypatch.setattr(cn_stock, "fetch_yahoo_chart_klines", lambda **kwargs: calls.append("yahoo") or [])
     monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", lambda **kwargs: calls.append("yfinance") or fallback)
@@ -114,7 +139,7 @@ def test_cnstock_minute_falls_back_when_source_has_only_one_bar(monkeypatch):
     rows = CNStockDataSource().get_kline("603618", "15m", 20)
 
     assert rows == fallback
-    assert calls == ["eastmoney", "yahoo", "yfinance"]
+    assert calls == ["tencent", "eastmoney", "yahoo", "yfinance"]
 
 
 def test_eastmoney_three_minute_bars_merge_one_minute_response(monkeypatch):

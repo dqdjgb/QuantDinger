@@ -18,6 +18,7 @@ from app.data_sources.tencent import normalize_cn_code, fetch_quote, parse_quote
 from app.data_sources.asia_stock_kline import (
     normalize_chart_timeframe,
     fetch_twelvedata_klines,
+    fetch_tencent_minute_klines,
     fetch_eastmoney_minute_klines,
     fetch_yahoo_chart_klines,
     fetch_yfinance_klines,
@@ -177,7 +178,26 @@ class CNStockDataSource(BaseDataSource):
                     truncate=(after_time is None),
                 )
 
-        # Tier 3: Eastmoney direct minute/hour K-lines for A-shares.
+        # Tier 3: Tencent minute/hour K-lines for A-shares.
+        if tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
+            rows = self._fetch_kline_source(
+                "TencentMinute",
+                code,
+                tf,
+                lim,
+                fetch_tencent_minute_klines,
+                is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
+            )
+            if self._has_enough_kline_rows(rows, lim):
+                return self.filter_and_limit(
+                    rows,
+                    limit=lim,
+                    before_time=before_time,
+                    after_time=after_time,
+                    truncate=(after_time is None),
+                )
+
+        # Tier 4: Eastmoney direct minute/hour K-lines for A-shares.
         if tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
             rows = self._fetch_kline_source(
                 "Eastmoney",
@@ -196,7 +216,7 @@ class CNStockDataSource(BaseDataSource):
                     truncate=(after_time is None),
                 )
 
-        # Tier 4: Yahoo chart HTTP fallback (no yfinance package required)
+        # Tier 5: Yahoo chart HTTP fallback (no yfinance package required)
         rows = self._fetch_kline_source(
             "YahooChart",
             code,
@@ -214,7 +234,7 @@ class CNStockDataSource(BaseDataSource):
                 truncate=(after_time is None),
             )
 
-        # Tier 5: yfinance package fallback (works when Yahoo not rate-limited)
+        # Tier 6: yfinance package fallback (works when Yahoo not rate-limited)
         rows = self._fetch_kline_source(
             "yfinance",
             code,
@@ -232,7 +252,7 @@ class CNStockDataSource(BaseDataSource):
                 truncate=(after_time is None),
             )
 
-        # Tier 6: AkShare (fragile overseas, last resort)
+        # Tier 7: AkShare (fragile overseas, last resort)
         if tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
             rows = self._fetch_kline_source(
                 "AkShare",

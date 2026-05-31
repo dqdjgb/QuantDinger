@@ -536,6 +536,108 @@ _EM_MINUTE_KLT_MAP = {
 }
 
 
+_TENCENT_MINUTE_PERIOD_MAP = {
+    "1m": "m1",
+    "3m": "m1",
+    "5m": "m5",
+    "15m": "m15",
+    "30m": "m30",
+    "1H": "m60",
+    "4H": "m60",
+}
+
+
+def _tencent_stock_code(tencent_code: str) -> str:
+    c = (tencent_code or "").strip().lower()
+    if len(c) >= 8 and c[:2] in ("sh", "sz"):
+        return c
+    digits = c.lstrip("shsz")
+    prefix = "sh" if digits.startswith("6") else "sz"
+    return f"{prefix}{digits}"
+
+
+def _bars_from_tencent_minute_rows(rows: Any) -> List[Dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in rows:
+        try:
+            if not isinstance(item, list) or len(item) < 6:
+                continue
+            t = pd.Timestamp(str(item[0]))
+            o = float(item[1])
+            c = float(item[2])
+            h = float(item[3])
+            low = float(item[4])
+            vol = float(item[5])
+            if o == 0 and c == 0:
+                continue
+            out.append({
+                "time": int(t.timestamp()),
+                "open": round(o, 4),
+                "high": round(h, 4),
+                "low": round(low, 4),
+                "close": round(c, 4),
+                "volume": round(vol, 2),
+            })
+        except Exception:
+            continue
+    out.sort(key=lambda x: x["time"])
+    return out
+
+
+def fetch_tencent_minute_klines(
+    *,
+    is_hk: bool,
+    tencent_code: str,
+    timeframe: str,
+    limit: int,
+    before_time: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Fetch CN A-share minute/hour K-lines from Tencent's ifzq endpoint."""
+    _ = before_time
+    if is_hk:
+        return []
+    period = _TENCENT_MINUTE_PERIOD_MAP.get(timeframe)
+    if not period:
+        return []
+
+    code = _tencent_stock_code(tencent_code)
+    merge_factor = _MERGE_FACTOR_MAP.get(timeframe, 1)
+    count = max(int(limit or 300), 1) * merge_factor
+    urls = (
+        "https://ifzq.gtimg.cn/appstock/app/kline/mkline",
+        "https://proxy.finance.qq.com/ifzqgtimg/appstock/app/kline/mkline",
+    )
+    params = {"param": f"{code},{period},,{count}"}
+    headers = get_request_headers("https://gu.qq.com/")
+
+    for url in urls:
+        for attempt in range(_MAX_ATTEMPTS):
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=20)
+                resp.raise_for_status()
+                data = resp.json()
+                raw = (((data or {}).get("data") or {}).get(code) or {}).get(period) or []
+                bars = _bars_from_tencent_minute_rows(raw)
+                if merge_factor > 1 and bars:
+                    bars = _merge_every_n_sorted_bars(bars, merge_factor)
+                logger.debug("Tencent minute returned %d bars for %s tf=%s", len(bars), code, timeframe)
+                return bars
+            except Exception as e:
+                if attempt + 1 < _MAX_ATTEMPTS and _is_transient(e):
+                    delay = min(_BACKOFF_CAP_SEC, _BACKOFF_BASE_SEC * (2 ** attempt))
+                    logger.debug(
+                        "Tencent minute transient error %s tf=%s (attempt %s/%s): %s",
+                        code, timeframe, attempt + 1, _MAX_ATTEMPTS, e,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning("Tencent minute K-line failed %s tf=%s url=%s: %s", code, timeframe, url, e)
+                break
+    return []
+
+
 def _eastmoney_secid_from_tencent(tencent_code: str) -> str:
     c = (tencent_code or "").strip().upper()
     if c.startswith("SH"):

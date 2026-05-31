@@ -443,6 +443,19 @@ def validate_code_safety(code: str) -> Tuple[bool, Optional[str]]:
         '__func__', '__dict__', '__module__',
     }
 
+    imported_dangerous_aliases = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split('.')[0]
+                if root in dangerous_modules:
+                    imported_dangerous_aliases.add(alias.asname or root)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            root = node.module.split('.')[0]
+            if root in dangerous_modules:
+                for alias in node.names:
+                    imported_dangerous_aliases.add(alias.asname or alias.name)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -460,7 +473,7 @@ def validate_code_safety(code: str) -> Tuple[bool, Optional[str]]:
             if isinstance(node.func, ast.Name) and node.func.id in dangerous_call_names:
                 return False, f"检测到危险函数调用: {node.func.id}()"
             if isinstance(node.func, ast.Attribute):
-                if isinstance(node.func.value, ast.Name) and node.func.value.id in dangerous_modules:
+                if isinstance(node.func.value, ast.Name) and node.func.value.id in imported_dangerous_aliases:
                     return False, f"检测到危险模块调用: {node.func.value.id}.{node.func.attr}"
 
         elif isinstance(node, ast.Attribute):

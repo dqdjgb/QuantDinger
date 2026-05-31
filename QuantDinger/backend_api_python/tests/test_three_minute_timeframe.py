@@ -20,6 +20,8 @@ def test_three_minute_timeframe_is_registered_for_kline_sources():
 
     assert asia_stock_kline._TD_INTERVAL_MAP["3m"] == "1min"
     assert asia_stock_kline._YF_INTERVAL_MAP["3m"] == "1m"
+    assert asia_stock_kline._EM_MINUTE_KLT_MAP["3m"] == "1"
+    assert asia_stock_kline._EM_MINUTE_KLT_MAP["4H"] == "60"
     assert asia_stock_kline._minute_period_str("3m") == "1"
     assert asia_stock_kline._MERGE_FACTOR_MAP["3m"] == 3
 

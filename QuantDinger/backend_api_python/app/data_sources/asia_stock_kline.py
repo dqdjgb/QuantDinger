@@ -24,6 +24,7 @@ from typing import Any, Dict, Generator, List, Optional
 import pandas as pd
 import requests
 
+from app.data_sources.rate_limiter import get_eastmoney_limiter, get_request_headers
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -425,6 +426,136 @@ def fetch_yfinance_klines(
 
 def _minute_period_str(timeframe: str) -> Optional[str]:
     return {"1m": "1", "3m": "1", "5m": "5", "15m": "15", "30m": "30", "1H": "60", "4H": "60"}.get(timeframe)
+
+
+_EM_MINUTE_KLT_MAP = {
+    "1m": "1",
+    "3m": "1",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1H": "60",
+    "4H": "60",
+}
+
+
+def _eastmoney_secid_from_tencent(tencent_code: str) -> str:
+    c = (tencent_code or "").strip().upper()
+    if c.startswith("SH"):
+        return f"1.{c[2:]}"
+    if c.startswith("SZ"):
+        return f"0.{c[2:]}"
+    digits = c.lstrip("SHSZ")
+    if digits.startswith("6"):
+        return f"1.{digits}"
+    return f"0.{digits}"
+
+
+def _em_minute_window(timeframe: str, limit: int, before_time: Optional[int]) -> tuple[str, str]:
+    end = datetime.fromtimestamp(int(before_time)) if before_time else datetime.now()
+    merge_factor = _MERGE_FACTOR_MAP.get(timeframe, 1)
+    effective_limit = max(int(limit or 300), 1) * merge_factor
+    if timeframe == "1m":
+        days = min(7, max(2, (effective_limit // 240) + 2))
+    elif timeframe in ("5m", "15m", "30m"):
+        bars_per_day = {"5m": 48, "15m": 16, "30m": 8}[timeframe]
+        days = min(60, max(3, (effective_limit // bars_per_day) + 3))
+    else:
+        days = min(180, max(8, (effective_limit // 4) + 8))
+    start = end - timedelta(days=days)
+    return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+
+
+def _bars_from_eastmoney_klines(klines: Any) -> List[Dict[str, Any]]:
+    if not isinstance(klines, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in klines:
+        try:
+            parts = str(item).split(",")
+            if len(parts) < 6:
+                continue
+            t = pd.Timestamp(parts[0])
+            ts = int(t.timestamp())
+            o = float(parts[1])
+            c = float(parts[2])
+            h = float(parts[3])
+            low = float(parts[4])
+            vol = float(parts[5])
+            if o == 0 and c == 0:
+                continue
+            out.append({
+                "time": ts,
+                "open": round(o, 4),
+                "high": round(h, 4),
+                "low": round(low, 4),
+                "close": round(c, 4),
+                "volume": round(vol, 2),
+            })
+        except Exception:
+            continue
+    out.sort(key=lambda x: x["time"])
+    return out
+
+
+def fetch_eastmoney_minute_klines(
+    *,
+    is_hk: bool,
+    tencent_code: str,
+    timeframe: str,
+    limit: int,
+    before_time: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Fetch CN A-share minute K-lines directly from Eastmoney."""
+    if is_hk:
+        return []
+    klt = _EM_MINUTE_KLT_MAP.get(timeframe)
+    if not klt:
+        return []
+
+    secid = _eastmoney_secid_from_tencent(tencent_code)
+    beg, end = _em_minute_window(timeframe, limit, before_time)
+    merge_factor = _MERGE_FACTOR_MAP.get(timeframe, 1)
+    params = {
+        "secid": secid,
+        "klt": klt,
+        "fqt": "1",
+        "beg": beg,
+        "end": end,
+        "lmt": str(max(int(limit or 300), 1) * merge_factor),
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
+    }
+    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            get_eastmoney_limiter().wait()
+            resp = requests.get(
+                url,
+                params=params,
+                headers=get_request_headers("https://quote.eastmoney.com/"),
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            raw = ((data or {}).get("data") or {}).get("klines") or []
+            bars = _bars_from_eastmoney_klines(raw)
+            if merge_factor > 1 and bars:
+                bars = _merge_every_n_sorted_bars(bars, merge_factor)
+            logger.debug("Eastmoney returned %d bars for %s tf=%s", len(bars), secid, timeframe)
+            return bars
+        except Exception as e:
+            if attempt + 1 < _MAX_ATTEMPTS and _is_transient(e):
+                delay = min(_BACKOFF_CAP_SEC, _BACKOFF_BASE_SEC * (2 ** attempt))
+                logger.debug(
+                    "Eastmoney minute transient error %s tf=%s (attempt %s/%s): %s",
+                    secid, timeframe, attempt + 1, _MAX_ATTEMPTS, e,
+                )
+                time.sleep(delay)
+                continue
+            logger.warning("Eastmoney minute K-line failed %s tf=%s: %s", secid, timeframe, e)
+            return []
 
 
 def _min_bar_window(timeframe: str, limit: int, before_time: Optional[int]) -> tuple[str, str]:

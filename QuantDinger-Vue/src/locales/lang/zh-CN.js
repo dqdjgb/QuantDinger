@@ -40,6 +40,7 @@ const locale = {
   'menu.dashboard.tradingAssistant': '策略与实盘',
   'menu.dashboard.backtestCenter': '回测中心',
   'menu.dashboard.indicatorIde': '指标 IDE',
+  'menu.dashboard.cnStockScreener': 'A股选股',
   'menu.dashboard.tradingBot': '交易机器人',
   'menu.dashboard.brokerAccounts': '实盘券商账户',
   'menu.dashboard.scriptStrategies': 'Python 脚本策略',

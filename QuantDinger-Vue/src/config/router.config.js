@@ -35,6 +35,12 @@ export const asyncRouterMap = [
         component: () => import('@/views/indicator-ide'),
         meta: { title: 'menu.dashboard.indicatorIde', keepAlive: true, icon: 'code', permission: ['dashboard'] }
       },
+      {
+        path: '/cn-stock-screener',
+        name: 'CNStockScreener',
+        component: () => import('@/views/cn-stock-screener'),
+        meta: { title: 'menu.dashboard.cnStockScreener', keepAlive: true, icon: 'stock', permission: ['dashboard'] }
+      },
       // 4. 策略与实盘（指标信号策略：创建 / 管理 / 与实盘联动；不含 Python 脚本策略）
       {
         path: '/strategy-live',

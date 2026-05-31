@@ -23,23 +23,23 @@
       </template>
       <template slot="entryPrice" slot-scope="text, record">
         <span v-if="hasValidPrice(record.entry_price || text)">
-          ${{ parseFloat(record.entry_price || text).toFixed(4) }}
+          {{ formatMoney(record.entry_price || text, 4) }}
         </span>
         <span v-else>--</span>
       </template>
       <template slot="currentPrice" slot-scope="text, record">
-        ${{ parseFloat(record.current_price || text || 0).toFixed(4) }}
+        {{ formatMoney(record.current_price || text || 0, 4) }}
       </template>
       <template slot="size" slot-scope="text, record">
         {{ parseFloat(record.size || text || 0).toFixed(4) }}
       </template>
       <template slot="notional" slot-scope="text, record">
-        <span v-if="getNotional(record) > 0">${{ getNotional(record).toFixed(2) }}</span>
+        <span v-if="getNotional(record) > 0">{{ formatMoney(getNotional(record), 2) }}</span>
         <span v-else>--</span>
       </template>
       <template slot="unrealizedPnl" slot-scope="text, record">
         <span :class="{ 'profit': parseFloat(record.unrealized_pnl || text || 0) > 0, 'loss': parseFloat(record.unrealized_pnl || text || 0) < 0 }">
-          ${{ parseFloat(record.unrealized_pnl || text || 0).toFixed(2) }}
+          {{ formatMoney(record.unrealized_pnl || text || 0, 2) }}
         </span>
       </template>
       <template slot="pnlPercent" slot-scope="text, record">
@@ -53,6 +53,7 @@
 
 <script>
 import { getStrategyPositions } from '@/api/strategy'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 export default {
   name: 'PositionRecords',
@@ -64,6 +65,10 @@ export default {
     marketType: {
       type: String,
       default: 'swap'
+    },
+    marketCategory: {
+      type: String,
+      default: 'Crypto'
     },
     leverage: {
       type: [Number, String],
@@ -216,6 +221,12 @@ export default {
     hasValidPrice (price) {
       const value = parseFloat(price)
       return Number.isFinite(value) && value > 0
+    },
+    formatMoney (value, decimals = 2) {
+      return formatMarketMoney(value, this.marketCategory, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      })
     },
     getNotional (record) {
       const size = parseFloat(record.size || 0)

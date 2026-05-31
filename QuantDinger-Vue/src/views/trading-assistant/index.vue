@@ -392,7 +392,7 @@
                         </div>
                         <div class="stat-content">
                           <div class="stat-label">{{ $t('trading-assistant.detail.totalInvestment') }}</div>
-                          <div class="stat-value">${{ strategyInitialCapital.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
+                          <div class="stat-value">{{ formatCurrency(strategyInitialCapital) }}</div>
                         </div>
                       </div>
                       <div class="stat-card" v-if="currentEquity !== null">
@@ -493,6 +493,7 @@
                       :description="cnStockPaperRuleText" />
                     <position-records
                       :strategy-id="selectedStrategy.id"
+                      :market-category="selectedStrategy.market_category || 'Crypto'"
                       :market-type="(selectedStrategy.trading_config && selectedStrategy.trading_config.market_type) || 'swap'"
                       :leverage="(selectedStrategy.trading_config && selectedStrategy.trading_config.leverage) || 1"
                       :loading="loadingRecords"
@@ -508,6 +509,7 @@
                       :description="cnStockPaperRuleText" />
                     <trading-records
                       :strategy-id="selectedStrategy.id"
+                      :market-category="selectedStrategy.market_category || 'Crypto'"
                       :loading="loadingRecords"
                       :is-dark="isDarkTheme" />
                   </a-tab-pane>
@@ -1410,6 +1412,7 @@ import PerformanceAnalysis from './components/PerformanceAnalysis.vue'
 import StrategyLogs from './components/StrategyLogs.vue'
 import DashboardOverview from '@/views/dashboard/index.vue'
 import ExchangeAccountModal from '@/components/ExchangeAccountModal/ExchangeAccountModal.vue'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 // 常见加密货币交易对
 const CRYPTO_SYMBOLS = [
@@ -2713,12 +2716,11 @@ export default {
     },
     formatCurrency (value) {
       if (value === null || value === undefined) return '-'
-      return '$' + value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return formatMarketMoney(value, this.selectedStrategy && this.selectedStrategy.market_category, { fallback: '-' })
     },
     formatPnl (value) {
       if (value === null || value === undefined) return '-'
-      const prefix = value >= 0 ? '+' : ''
-      return prefix + '$' + Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return formatMarketMoney(value, this.selectedStrategy && this.selectedStrategy.market_category, { signed: true, fallback: '-' })
     },
     formatPnlPercent (value) {
       if (value === null || value === undefined) return '-'

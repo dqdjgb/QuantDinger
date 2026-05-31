@@ -18,6 +18,7 @@ from app.data_sources.tencent import normalize_cn_code, fetch_quote, parse_quote
 from app.data_sources.asia_stock_kline import (
     normalize_chart_timeframe,
     fetch_twelvedata_klines,
+    fetch_eastmoney_minute_klines,
     fetch_yfinance_klines,
     fetch_akshare_minute_klines,
     fetch_akshare_weekly_klines,
@@ -90,7 +91,21 @@ class CNStockDataSource(BaseDataSource):
                     truncate=(after_time is None),
                 )
 
-        # Tier 3: yfinance (works when Yahoo not rate-limited)
+        # Tier 3: Eastmoney direct minute/hour K-lines for A-shares.
+        if tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
+            rows = fetch_eastmoney_minute_klines(
+                is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
+            )
+            if rows:
+                return self.filter_and_limit(
+                    rows,
+                    limit=lim,
+                    before_time=before_time,
+                    after_time=after_time,
+                    truncate=(after_time is None),
+                )
+
+        # Tier 4: yfinance (works when Yahoo not rate-limited)
         rows = fetch_yfinance_klines(
             is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
         )
@@ -103,8 +118,8 @@ class CNStockDataSource(BaseDataSource):
                 truncate=(after_time is None),
             )
 
-        # Tier 4: AkShare (fragile overseas, last resort)
-        if tf in ("1m", "5m", "15m", "30m", "1H", "4H"):
+        # Tier 5: AkShare (fragile overseas, last resort)
+        if tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H"):
             rows = fetch_akshare_minute_klines(
                 is_hk=False, tencent_code=code, timeframe=tf, limit=lim, before_time=before_time
             )

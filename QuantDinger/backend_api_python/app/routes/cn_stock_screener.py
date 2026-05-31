@@ -95,8 +95,13 @@ def create_paper_strategies():
             user_id=int(g.user_id),
             items=items,
             strategy_name=(data.get("strategy_name") or "A股选股模拟策略").strip(),
+            strategy_type=(data.get("strategy_type") or "IndicatorStrategy").strip(),
+            strategy_template=(data.get("strategy_template") or "ma_momentum").strip(),
             initial_capital=_float_payload(data, "initial_capital", 10000),
             decide_interval=_int_payload(data, "decide_interval", 300),
+            timeframe=(data.get("timeframe") or "1D").strip(),
+            trading_config=data.get("trading_config") if isinstance(data.get("trading_config"), dict) else {},
+            indicator_params=data.get("indicator_params") if isinstance(data.get("indicator_params"), dict) else {},
         )
 
         started_ids = []

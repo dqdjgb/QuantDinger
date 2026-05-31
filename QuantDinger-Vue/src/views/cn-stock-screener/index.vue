@@ -60,6 +60,84 @@
       />
     </div>
 
+    <div class="strategy-config">
+      <div class="config-title">批量模拟策略参数</div>
+      <a-form layout="inline" class="strategy-form">
+        <a-form-item label="策略名称">
+          <a-input v-model="strategyForm.strategy_name" class="w-180" />
+        </a-form-item>
+        <a-form-item label="策略类型">
+          <a-select v-model="strategyForm.strategy_type" class="w-150">
+            <a-select-option value="IndicatorStrategy">指标策略</a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="策略模板">
+          <a-select v-model="strategyForm.strategy_template" class="w-150" @change="handleStrategyTemplateChange">
+            <a-select-option value="ma_momentum">均线动量</a-select-option>
+            <a-select-option value="breakout">突破跟随</a-select-option>
+            <a-select-option value="mean_reversion">均值回归</a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="K线频率">
+          <a-select v-model="strategyForm.timeframe" class="w-96">
+            <a-select-option value="1m">1m</a-select-option>
+            <a-select-option value="5m">5m</a-select-option>
+            <a-select-option value="15m">15m</a-select-option>
+            <a-select-option value="30m">30m</a-select-option>
+            <a-select-option value="1H">1H</a-select-option>
+            <a-select-option value="4H">4H</a-select-option>
+            <a-select-option value="1D">1D</a-select-option>
+            <a-select-option value="1W">1W</a-select-option>
+          </a-select>
+        </a-form-item>
+        <a-form-item label="资金">
+          <a-input-number v-model="strategyForm.initial_capital" :min="100" :step="1000" />
+        </a-form-item>
+        <a-form-item label="决策间隔秒">
+          <a-input-number v-model="strategyForm.decide_interval" :min="60" :step="60" />
+        </a-form-item>
+        <a-form-item label="单次仓位%">
+          <a-input-number v-model="strategyForm.position_pct" :min="1" :max="100" :step="1" />
+        </a-form-item>
+        <a-form-item label="最大仓位%">
+          <a-input-number v-model="strategyForm.max_position_pct" :min="1" :max="100" :step="1" />
+        </a-form-item>
+        <a-form-item label="止盈%">
+          <a-input-number v-model="strategyForm.take_profit_pct" :min="0" :max="100" :step="0.5" />
+        </a-form-item>
+        <a-form-item label="止损%">
+          <a-input-number v-model="strategyForm.stop_loss_pct" :min="0" :max="100" :step="0.5" />
+        </a-form-item>
+        <a-form-item label="移动止损">
+          <a-switch :checked="strategyForm.trailing_enabled" @change="checked => { strategyForm.trailing_enabled = checked }" />
+        </a-form-item>
+        <a-form-item v-if="strategyForm.trailing_enabled" label="回撤%">
+          <a-input-number v-model="strategyForm.trailing_stop_pct" :min="0" :max="100" :step="0.5" />
+        </a-form-item>
+        <a-form-item v-if="strategyForm.trailing_enabled" label="激活%">
+          <a-input-number v-model="strategyForm.trailing_activation_pct" :min="0" :max="100" :step="0.5" />
+        </a-form-item>
+        <a-form-item label="手续费">
+          <a-input-number v-model="strategyForm.commission" :min="0" :max="0.1" :step="0.0001" />
+        </a-form-item>
+        <a-form-item label="滑点">
+          <a-input-number v-model="strategyForm.slippage" :min="0" :max="0.1" :step="0.0001" />
+        </a-form-item>
+        <a-form-item
+          v-for="field in templateParamFields"
+          :key="field.key"
+          :label="field.label"
+        >
+          <a-input-number
+            v-model="strategyForm.indicator_params[field.key]"
+            :min="field.min"
+            :max="field.max"
+            :step="field.step"
+          />
+        </a-form-item>
+      </a-form>
+    </div>
+
     <div class="action-bar">
       <a-space>
         <a-button
@@ -195,6 +273,28 @@ export default {
         top_n: 10,
         ai_top_n: 5,
         strategy_feedback_days: 30
+      },
+      strategyForm: {
+        strategy_name: 'A股选股模拟策略',
+        strategy_type: 'IndicatorStrategy',
+        strategy_template: 'ma_momentum',
+        timeframe: '1D',
+        initial_capital: 10000,
+        decide_interval: 300,
+        position_pct: 20,
+        max_position_pct: 100,
+        take_profit_pct: 8,
+        stop_loss_pct: 4,
+        trailing_enabled: false,
+        trailing_stop_pct: 3,
+        trailing_activation_pct: 5,
+        commission: 0.0003,
+        slippage: 0,
+        indicator_params: {
+          fast_ma: 5,
+          slow_ma: 20,
+          volume_ratio_min: 1.05
+        }
       }
     }
   },
@@ -230,6 +330,26 @@ export default {
         }
       }
     },
+    templateParamFields () {
+      const map = {
+        ma_momentum: [
+          { key: 'fast_ma', label: '快线均线', min: 2, max: 60, step: 1 },
+          { key: 'slow_ma', label: '慢线均线', min: 5, max: 180, step: 1 },
+          { key: 'volume_ratio_min', label: '量能倍数', min: 0.5, max: 5, step: 0.05 }
+        ],
+        breakout: [
+          { key: 'breakout_period', label: '突破周期', min: 5, max: 120, step: 1 },
+          { key: 'exit_ma', label: '离场均线', min: 3, max: 80, step: 1 },
+          { key: 'volume_ratio_min', label: '量能倍数', min: 0.5, max: 5, step: 0.05 }
+        ],
+        mean_reversion: [
+          { key: 'ma_period', label: '均值周期', min: 5, max: 120, step: 1 },
+          { key: 'entry_drop_pct', label: '买入偏离%', min: 0.5, max: 30, step: 0.5 },
+          { key: 'exit_rebound_pct', label: '卖出反弹%', min: 0.5, max: 30, step: 0.5 }
+        ]
+      }
+      return map[this.strategyForm.strategy_template] || map.ma_momentum
+    },
     detailTitle () {
       if (!this.activeItem) return '详情'
       return `${this.activeItem.symbol} ${this.activeItem.name || ''}`
@@ -243,6 +363,66 @@ export default {
         top_n: 10,
         ai_top_n: 5,
         strategy_feedback_days: 30
+      }
+      this.strategyForm = {
+        strategy_name: 'A股选股模拟策略',
+        strategy_type: 'IndicatorStrategy',
+        strategy_template: 'ma_momentum',
+        timeframe: '1D',
+        initial_capital: 10000,
+        decide_interval: 300,
+        position_pct: 20,
+        max_position_pct: 100,
+        take_profit_pct: 8,
+        stop_loss_pct: 4,
+        trailing_enabled: false,
+        trailing_stop_pct: 3,
+        trailing_activation_pct: 5,
+        commission: 0.0003,
+        slippage: 0,
+        indicator_params: {
+          fast_ma: 5,
+          slow_ma: 20,
+          volume_ratio_min: 1.05
+        }
+      }
+    },
+    handleStrategyTemplateChange (value) {
+      const defaults = {
+        ma_momentum: { fast_ma: 5, slow_ma: 20, volume_ratio_min: 1.05 },
+        breakout: { breakout_period: 20, exit_ma: 10, volume_ratio_min: 1.1 },
+        mean_reversion: { ma_period: 20, entry_drop_pct: 4, exit_rebound_pct: 2 }
+      }
+      this.$set(this.strategyForm, 'indicator_params', { ...(defaults[value] || defaults.ma_momentum) })
+    },
+    buildCreatePayload (startImmediately) {
+      const indicatorParams = { ...(this.strategyForm.indicator_params || {}) }
+      return {
+        items: this.selectedExecutable,
+        strategy_name: this.strategyForm.strategy_name || 'A股选股模拟策略',
+        strategy_type: this.strategyForm.strategy_type || 'IndicatorStrategy',
+        strategy_template: this.strategyForm.strategy_template || 'ma_momentum',
+        timeframe: this.strategyForm.timeframe || this.form.timeframe || '1D',
+        initial_capital: this.strategyForm.initial_capital || 10000,
+        decide_interval: this.strategyForm.decide_interval || 300,
+        indicator_params: indicatorParams,
+        trading_config: {
+          timeframe: this.strategyForm.timeframe || this.form.timeframe || '1D',
+          initial_capital: this.strategyForm.initial_capital || 10000,
+          decide_interval: this.strategyForm.decide_interval || 300,
+          entry_pct: this.strategyForm.position_pct,
+          position_pct: this.strategyForm.position_pct,
+          max_position_pct: this.strategyForm.max_position_pct,
+          take_profit_pct: this.strategyForm.take_profit_pct,
+          stop_loss_pct: this.strategyForm.stop_loss_pct,
+          trailing_enabled: !!this.strategyForm.trailing_enabled,
+          trailing_stop_pct: this.strategyForm.trailing_stop_pct,
+          trailing_activation_pct: this.strategyForm.trailing_activation_pct,
+          commission: this.strategyForm.commission,
+          slippage: this.strategyForm.slippage,
+          indicator_params: indicatorParams
+        },
+        start_immediately: startImmediately
       }
     },
     async runScreener () {
@@ -269,13 +449,7 @@ export default {
       if (!this.selectedExecutable.length) return
       this.creating = true
       try {
-        const res = await createCNStockPaperStrategies({
-          items: this.selectedExecutable,
-          strategy_name: 'A股选股模拟策略',
-          initial_capital: 10000,
-          decide_interval: 300,
-          start_immediately: startImmediately
-        })
+        const res = await createCNStockPaperStrategies(this.buildCreatePayload(startImmediately))
         if (res.code === 1) {
           const data = res.data || {}
           const count = (data.created_ids || []).length
@@ -388,6 +562,33 @@ export default {
 
 .w-96 {
   width: 96px;
+}
+
+.w-150 {
+  width: 150px;
+}
+
+.w-180 {
+  width: 180px;
+}
+
+.strategy-config {
+  padding: 14px 16px 2px;
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid #e6ebf2;
+}
+
+.config-title {
+  margin-bottom: 10px;
+  color: #172033;
+  font-weight: 650;
+}
+
+.strategy-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
 }
 
 .summary-strip {

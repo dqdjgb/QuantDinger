@@ -2138,8 +2138,8 @@ def get_strategy_logs():
                 continue
             ts = rr.get('timestamp')
             if ts is not None:
-                from app.utils.timeutil import to_utc_iso
-                iso = to_utc_iso(ts)
+                from app.utils.timeutil import to_timezone_iso
+                iso = to_timezone_iso(ts, 'Asia/Shanghai', assume_naive_tz='UTC')
                 rr['timestamp'] = iso if iso is not None else str(ts)
             out.append(rr)
         # Already ORDER BY id DESC — newest first for the UI log panel.

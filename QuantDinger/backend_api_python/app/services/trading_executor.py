@@ -964,11 +964,13 @@ class TradingExecutor:
             # 加载策略配置
             strategy = self._load_strategy(strategy_id)
             if not strategy:
+                exit_reason = "strategy not found"
                 logger.error(f"Strategy {strategy_id} not found")
                 return
             
             stype = strategy.get('strategy_type') or ''
             if stype not in ('IndicatorStrategy', 'ScriptStrategy'):
+                exit_reason = f"unsupported strategy_type for realtime execution: {stype}"
                 logger.error(f"Strategy {strategy_id} has unsupported strategy_type for realtime execution: {stype}")
                 return
             is_script = stype == 'ScriptStrategy'
@@ -1015,6 +1017,7 @@ class TradingExecutor:
             # 获取市场类型，严格以策略配置为准，不再通过杠杆反推。
             market_type = trading_config.get('market_type', 'swap')
             if market_type not in ['swap', 'spot']:
+                exit_reason = f"invalid market_type={market_type} (only swap/spot supported)"
                 logger.error(f"Strategy {strategy_id} invalid market_type={market_type} (only swap/spot supported); refusing to start")
                 return
             if market_type == 'swap':
@@ -1060,6 +1063,7 @@ class TradingExecutor:
             if is_script:
                 strategy_code = (strategy.get('strategy_code') or '').strip()
                 if not strategy_code:
+                    exit_reason = "strategy_code is empty"
                     logger.error(f"Strategy {strategy_id} strategy_code is empty")
                     return
                 if '\\n' in strategy_code and '\n' not in strategy_code:
@@ -1075,6 +1079,7 @@ class TradingExecutor:
                 try:
                     on_init_script, on_bar_script = compile_strategy_script_handlers(strategy_code)
                 except Exception as e:
+                    exit_reason = f"script compile failed: {e}"
                     logger.error(f"Strategy {strategy_id} script compile failed: {e}")
                     logger.error(traceback.format_exc())
                     return
@@ -1085,6 +1090,7 @@ class TradingExecutor:
                 if not indicator_code and indicator_id:
                     indicator_code = self._get_indicator_code_from_db(indicator_id)
                 if not indicator_code:
+                    exit_reason = "indicator_code is empty"
                     logger.error(f"Strategy {strategy_id} indicator_code is empty")
                     return
                 if not isinstance(indicator_code, str):
@@ -1114,6 +1120,7 @@ class TradingExecutor:
                 return
 
             if is_script and cs_strategy_type == 'cross_sectional':
+                exit_reason = "ScriptStrategy does not support cross_sectional mode"
                 logger.error(f"Strategy {strategy_id} ScriptStrategy does not support cross_sectional mode")
                 return
 
@@ -1148,6 +1155,7 @@ class TradingExecutor:
                 exchange_id=kline_exchange_id, market_type=kline_market_type,
             )
             if not klines or len(klines) < 2:
+                exit_reason = f"failed to fetch K-lines for {market_category}:{symbol} timeframe={timeframe}"
                 logger.error(f"Strategy {strategy_id} failed to fetch K-lines")
                 return
             logger.info(rf'Strategy {strategy_id} history kline number: {len(klines)}')
@@ -1155,6 +1163,7 @@ class TradingExecutor:
             # 转换为DataFrame
             df = self._klines_to_dataframe(klines)
             if len(df) == 0:
+                exit_reason = f"K-lines are empty after normalization for {market_category}:{symbol} timeframe={timeframe}"
                 logger.error(f"Strategy {strategy_id} K-lines are empty after normalization")
                 return
 
@@ -1231,6 +1240,7 @@ class TradingExecutor:
                     initial_last_add_price=initial_last_add_price
                 )
                 if indicator_result is None:
+                    exit_reason = "indicator execution failed"
                     logger.error(f"Strategy {strategy_id} indicator execution failed")
                     return
                 pending_signals = indicator_result.get('pending_signals', [])

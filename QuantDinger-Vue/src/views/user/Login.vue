@@ -413,6 +413,43 @@
       </div>
     </div>
 
+    <!-- Password Login 2FA Modal -->
+    <a-modal
+      v-model="showPassword2faModal"
+      :title="$t('user.login.twoFactorTitle') || 'Security Verification'"
+      :confirmLoading="password2faLoading"
+      :okText="$t('user.login.verifyAndLogin') || 'Verify and Login'"
+      :cancelText="$t('user.resetPassword.back') || 'Back'"
+      :destroyOnClose="true"
+      @ok="handlePassword2faSubmit"
+      @cancel="resetPassword2fa"
+    >
+      <a-alert v-if="password2faError" type="error" showIcon style="margin-bottom: 16px;" :message="password2faError" />
+      <p class="two-factor-tip">
+        {{ $t('user.login.twoFactorSent') || 'A verification code has been sent to' }}
+        <strong>{{ password2faEmailMasked }}</strong>
+      </p>
+      <a-form class="auth-form" :form="password2faForm">
+        <a-form-item>
+          <a-input
+            size="large"
+            :maxLength="8"
+            :placeholder="$t('user.login.verificationCode') || 'Verification Code'"
+            @pressEnter="handlePassword2faSubmit"
+            v-decorator="[
+              'code',
+              {
+                rules: [{ required: true, message: $t('user.login.codeRequired') || 'Please enter verification code' }],
+                validateTrigger: 'blur'
+              }
+            ]"
+          >
+            <a-icon slot="prefix" type="safety-certificate" :style="{ color: 'rgba(0,0,0,.25)' }"/>
+          </a-input>
+        </a-form-item>
+      </a-form>
+    </a-modal>
+
     <!-- Reset Password Modal -->
     <a-modal
       v-model="showResetModal"
@@ -664,6 +701,12 @@ export default {
       loginError: '',
       loginLoading: false,
       loginTurnstileToken: null,
+      showPassword2faModal: false,
+      password2faForm: this.$form.createForm(this, { name: 'password2faForm' }),
+      password2faChallenge: '',
+      password2faEmailMasked: '',
+      password2faLoading: false,
+      password2faError: '',
 
       // Email Code Login
       codeLoginForm: this.$form.createForm(this, { name: 'codeLoginForm' }),
@@ -739,7 +782,7 @@ export default {
     if (this.resetCountdownTimer) clearInterval(this.resetCountdownTimer)
   },
   methods: {
-    ...mapActions(['Login', 'Logout']),
+    ...mapActions(['Login', 'Logout', 'CompletePasswordLogin2fa']),
 
     async loadSecurityConfig () {
       try {
@@ -829,7 +872,17 @@ export default {
         this.loginError = ''
 
         this.Login({ ...values, turnstile_token: this.loginTurnstileToken })
-          .then(() => {
+          .then((res) => {
+            if (res?.data?.requires_2fa) {
+              this.password2faChallenge = res.data.challenge
+              this.password2faEmailMasked = res.data.email_masked || ''
+              this.password2faError = ''
+              this.showPassword2faModal = true
+              this.$nextTick(() => {
+                this.password2faForm.resetFields()
+              })
+              return
+            }
             this.$router.push({ path: '/' })
             this.$notification.success({
               message: 'Welcome',
@@ -847,6 +900,43 @@ export default {
             this.loginLoading = false
           })
       })
+    },
+
+    handlePassword2faSubmit () {
+      this.password2faForm.validateFields((err, values) => {
+        if (err) return
+
+        this.password2faLoading = true
+        this.password2faError = ''
+
+        this.CompletePasswordLogin2fa({
+          challenge: this.password2faChallenge,
+          code: values.code
+        }).then(() => {
+          this.showPassword2faModal = false
+          this.$router.push({ path: '/' })
+          this.$notification.success({
+            message: 'Welcome',
+            description: `${timeFix()}, welcome back.`
+          })
+        }).catch(err => {
+          const response = err.response || {}
+          const data = response.data || {}
+          this.password2faError = data.msg || err.message || 'Verification failed'
+        }).finally(() => {
+          this.password2faLoading = false
+        })
+      })
+    },
+
+    resetPassword2fa () {
+      this.showPassword2faModal = false
+      this.password2faChallenge = ''
+      this.password2faEmailMasked = ''
+      this.password2faError = ''
+      this.password2faForm.resetFields()
+      if (this.$refs.loginTurnstile) this.$refs.loginTurnstile.reset()
+      this.loginTurnstileToken = null
     },
 
     // ==================== Email Code Login ====================
@@ -1574,6 +1664,17 @@ export default {
 
 .success-panel {
   padding: 20px 0;
+}
+
+.two-factor-tip {
+  margin-bottom: 16px;
+  color: rgba(0, 0, 0, 0.65);
+  line-height: 1.6;
+
+  strong {
+    margin-left: 4px;
+    color: rgba(0, 0, 0, 0.85);
+  }
 }
 
 .password-requirements {

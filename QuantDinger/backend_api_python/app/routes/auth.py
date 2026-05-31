@@ -7,6 +7,7 @@ Supports both multi-user (database) and single-user (legacy) modes.
 import os
 from flask import Blueprint, request, jsonify, g, redirect
 from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from app.config.settings import Config
 from app.utils.auth import generate_token, login_required, authenticate_legacy
 from app.utils.logger import get_logger
@@ -14,6 +15,78 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 auth_bp = Blueprint('auth', __name__)
+
+PASSWORD_LOGIN_2FA_CODE_TYPE = 'password_login_2fa'
+PASSWORD_LOGIN_2FA_MAX_AGE_SECONDS = int(os.getenv('PASSWORD_LOGIN_2FA_MAX_AGE_SECONDS', '600'))
+
+
+def _get_2fa_serializer() -> URLSafeTimedSerializer:
+    secret = getattr(Config, 'SECRET_KEY', None) or os.getenv('SECRET_KEY') or os.getenv('JWT_SECRET_KEY') or 'quantdinger-dev-secret'
+    return URLSafeTimedSerializer(secret, salt='password-login-2fa')
+
+
+def _create_password_login_challenge(user: dict) -> str:
+    return _get_2fa_serializer().dumps({
+        'user_id': user.get('id') or user.get('user_id', 1),
+        'username': user.get('username', ''),
+        'email': (user.get('email') or '').strip().lower(),
+        'role': user.get('role', 'user')
+    })
+
+
+def _load_password_login_challenge(challenge: str):
+    try:
+        payload = _get_2fa_serializer().loads(challenge, max_age=PASSWORD_LOGIN_2FA_MAX_AGE_SECONDS)
+        return payload, None
+    except SignatureExpired:
+        return None, 'Verification session expired. Please login again.'
+    except BadSignature:
+        return None, 'Invalid verification session. Please login again.'
+
+
+def _mask_email(email: str) -> str:
+    email = (email or '').strip()
+    if '@' not in email:
+        return email
+    name, domain = email.split('@', 1)
+    if len(name) <= 2:
+        masked_name = name[:1] + '*'
+    else:
+        masked_name = name[:2] + '*' * min(len(name) - 2, 4)
+    return f"{masked_name}@{domain}"
+
+
+def _build_login_userinfo(user: dict, username_fallback: str = None) -> dict:
+    role = user.get('role', 'admin')
+    return {
+        'id': user.get('id') or user.get('user_id', 1),
+        'username': user.get('username', username_fallback or ''),
+        'nickname': user.get('nickname', 'User'),
+        'email': user.get('email'),
+        'avatar': user.get('avatar', '/avatar2.jpg'),
+        'timezone': str(user.get('timezone') or '').strip(),
+        'role': {
+            'id': role,
+            'permissions': _get_permissions(role)
+        }
+    }
+
+
+def _issue_login_token(user: dict, username_fallback: str = None):
+    try:
+        from app.services.user_service import get_user_service
+        new_token_version = get_user_service().increment_token_version(user.get('id') or user.get('user_id', 1))
+    except Exception as e:
+        logger.warning(f"Failed to increment token_version: {e}")
+        new_token_version = 1
+
+    token = generate_token(
+        user_id=user.get('id') or user.get('user_id', 1),
+        username=user.get('username', username_fallback or ''),
+        role=user.get('role', 'admin'),
+        token_version=new_token_version
+    )
+    return token, _build_login_userinfo(user, username_fallback)
 
 def _build_frontend_login_redirect(frontend_url: str, **params) -> str:
     """
@@ -225,6 +298,28 @@ def login():
             return jsonify({'code': 0, 'msg': 'Account is pending activation', 'data': None}), 403
         
         # Step 4: Increment token_version (invalidates old sessions for single-client login)
+        user_email = (user.get('email') or '').strip().lower()
+        if user_email:
+            from app.services.email_service import get_email_service
+            email_service = get_email_service()
+            success, msg = email_service.send_verification_code(user_email, PASSWORD_LOGIN_2FA_CODE_TYPE, ip_address)
+            if not success:
+                logger.warning(f"Failed to send password login 2FA code: {msg}")
+                return jsonify({'code': 0, 'msg': msg, 'data': None}), 500
+
+            security.log_security_event('password_login_2fa_sent', user.get('id'), ip_address, user_agent,
+                                       {'username': username, 'email': user_email})
+            return jsonify({
+                'code': 1,
+                'msg': 'Verification code sent',
+                'data': {
+                    'requires_2fa': True,
+                    'challenge': _create_password_login_challenge(user),
+                    'email_masked': _mask_email(user_email),
+                    'expires_in': PASSWORD_LOGIN_2FA_MAX_AGE_SECONDS
+                }
+            })
+
         user_id = user.get('id') or user.get('user_id', 1)
         try:
             from app.services.user_service import get_user_service
@@ -276,6 +371,69 @@ def login():
     except Exception as e:
         logger.error(f"Login error: {e}")
         return jsonify({'code': 500, 'msg': str(e), 'data': None}), 500
+
+
+@auth_bp.route('/login/2fa', methods=['POST'])
+def complete_password_login_2fa():
+    """Complete password login after email verification."""
+    ip_address = _get_client_ip()
+    user_agent = _get_user_agent()
+
+    try:
+        from app.services.email_service import get_email_service
+        from app.services.security_service import get_security_service
+        from app.services.user_service import get_user_service
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'code': 0, 'msg': 'No data provided', 'data': None}), 400
+
+        challenge = (data.get('challenge') or '').strip()
+        code = (data.get('code') or '').strip()
+        if not challenge or not code:
+            return jsonify({'code': 0, 'msg': 'Missing verification code', 'data': None}), 400
+
+        payload, challenge_error = _load_password_login_challenge(challenge)
+        if challenge_error:
+            return jsonify({'code': 0, 'msg': challenge_error, 'data': None}), 400
+
+        email = (payload.get('email') or '').strip().lower()
+        code_valid, code_msg = get_email_service().verify_code(email, code, PASSWORD_LOGIN_2FA_CODE_TYPE)
+        if not code_valid:
+            return jsonify({'code': 0, 'msg': code_msg, 'data': None}), 400
+
+        user = get_user_service().get_user_by_id(payload.get('user_id'))
+        if not user or (user.get('email') or '').strip().lower() != email:
+            return jsonify({'code': 0, 'msg': 'User verification failed. Please login again.', 'data': None}), 400
+
+        if user.get('status') == 'disabled':
+            return jsonify({'code': 0, 'msg': 'Account is disabled', 'data': None}), 403
+        if user.get('status') == 'pending':
+            return jsonify({'code': 0, 'msg': 'Account is pending activation', 'data': None}), 403
+
+        token, userinfo = _issue_login_token(user, payload.get('username'))
+        if not token:
+            return jsonify({'code': 500, 'msg': 'Token generation error', 'data': None}), 500
+
+        security = get_security_service()
+        username = user.get('username') or payload.get('username') or email
+        security.record_login_attempt(ip_address, 'ip', True, ip_address, user_agent)
+        security.record_login_attempt(username, 'account', True, ip_address, user_agent)
+        security.clear_login_attempts(ip_address, 'ip')
+        security.clear_login_attempts(username, 'account')
+        security.log_security_event('login_success', user.get('id'), ip_address, user_agent, {'two_factor': True})
+
+        return jsonify({
+            'code': 1,
+            'msg': 'Login successful',
+            'data': {
+                'token': token,
+                'userinfo': userinfo
+            }
+        })
+    except Exception as e:
+        logger.error(f"complete_password_login_2fa error: {e}")
+        return jsonify({'code': 0, 'msg': 'Verification failed', 'data': None}), 500
 
 
 # =============================================================================

@@ -21,7 +21,7 @@ without any further work on the frontend.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 try:
@@ -45,6 +45,59 @@ def _server_tzinfo() -> timezone:
     return timezone.utc
 
 
+def _named_tzinfo(name: str) -> timezone:
+    """Resolve an IANA timezone name, falling back to UTC."""
+    normalized = (name or "").strip()
+    if normalized in ("UTC", "Etc/UTC", "Z"):
+        return timezone.utc
+    if normalized in ("Asia/Shanghai", "Asia/Chongqing", "PRC", "CST", "UTC+8", "UTC+08:00"):
+        return timezone(timedelta(hours=8))
+    if ZoneInfo is not None:
+        try:
+            return ZoneInfo(normalized)  # type: ignore[return-value]
+        except Exception:
+            pass
+    return timezone.utc
+
+
+def _coerce_datetime(value: Any, naive_tz: timezone) -> Optional[datetime]:
+    """Parse supported timestamp values and attach ``naive_tz`` when needed."""
+    if value is None or value == "":
+        return None
+
+    dt: Optional[datetime] = None
+
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, (int, float)):
+        ts = float(value)
+        if ts > 1e12:
+            ts /= 1000.0
+        try:
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        except Exception:
+            return None
+    elif isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            normalized = s.replace("Z", "+00:00") if s.endswith("Z") else s
+            if " " in normalized and "T" not in normalized:
+                normalized = normalized.replace(" ", "T", 1)
+            dt = datetime.fromisoformat(normalized)
+        except Exception:
+            return None
+    else:
+        return None
+
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=naive_tz)
+    return dt
+
+
 def to_utc_iso(value: Any) -> Optional[str]:
     """Convert a value to a UTC ISO 8601 string with a ``Z`` suffix.
 
@@ -63,45 +116,9 @@ def to_utc_iso(value: Any) -> Optional[str]:
       has no time-zone designator we treat it as server local time.
     * Anything else → ``None`` (the route can decide to fall back to ``str()``).
     """
-    if value is None or value == "":
-        return None
-
-    dt: Optional[datetime] = None
-
-    if isinstance(value, datetime):
-        dt = value
-    elif isinstance(value, (int, float)):
-        ts = float(value)
-        # Heuristic: > 1e12 is milliseconds.
-        if ts > 1e12:
-            ts /= 1000.0
-        try:
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-        except Exception:
-            return None
-    elif isinstance(value, str):
-        s = value.strip()
-        if not s:
-            return None
-        try:
-            # Support trailing "Z" (Python <3.11 does not accept it directly).
-            normalized = s.replace("Z", "+00:00") if s.endswith("Z") else s
-            # ``fromisoformat`` accepts both ``T`` and space separators since
-            # Python 3.11; on 3.9/3.10 it tolerates space too but not trailing
-            # microsecond rounding edge cases.  Replace space defensively.
-            if " " in normalized and "T" not in normalized:
-                normalized = normalized.replace(" ", "T", 1)
-            dt = datetime.fromisoformat(normalized)
-        except Exception:
-            return None
-    else:
-        return None
-
+    dt = _coerce_datetime(value, _server_tzinfo())
     if dt is None:
         return None
-
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_server_tzinfo())
     dt_utc = dt.astimezone(timezone.utc)
     # Always emit with trailing Z and second-precision (drop microseconds for
     # smaller, cleaner payloads).  ISO 8601 with Z is unambiguous for all
@@ -109,4 +126,19 @@ def to_utc_iso(value: Any) -> Optional[str]:
     return dt_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-__all__ = ["to_utc_iso"]
+def to_timezone_iso(value: Any, tz_name: str, assume_naive_tz: str = "UTC") -> Optional[str]:
+    """Convert a timestamp to an ISO string in ``tz_name``.
+
+    ``assume_naive_tz`` matters for PostgreSQL ``TIMESTAMP`` values.  The
+    backend connection forces PostgreSQL sessions to UTC, so strategy runtime
+    log rows are naive UTC values and should not be interpreted as server-local
+    wall clock.
+    """
+    dt = _coerce_datetime(value, _named_tzinfo(assume_naive_tz))
+    if dt is None:
+        return None
+    target = _named_tzinfo(tz_name)
+    return dt.astimezone(target).replace(microsecond=0).isoformat()
+
+
+__all__ = ["to_utc_iso", "to_timezone_iso"]

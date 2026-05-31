@@ -39,6 +39,7 @@ from app.services.live_trading.symbols import to_gate_currency_pair
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 from app.utils.strategy_runtime_logs import append_strategy_log
+from app.utils.strategy_execution_events import append_strategy_execution_event
 from app.services.strategy_lifecycle import (
     auto_stop_live_strategy,
     is_fatal_exchange_error,
@@ -919,6 +920,19 @@ class PendingOrderWorker:
                 if fail_channels:
                     note += f";fail={','.join(fail_channels)}"
                 self._mark_sent(order_id=order_id, note=note[:200])
+                append_strategy_execution_event(
+                    strategy_id=int(strategy_id or 0),
+                    event_type="notification_sent",
+                    status="sent",
+                    execution_mode=mode,
+                    symbol=str(symbol or ""),
+                    signal_type=str(signal_type or ""),
+                    decision_source="worker",
+                    price=float(price or 0.0),
+                    amount=float(amount or 0.0),
+                    pending_order_id=order_id,
+                    result={"ok_channels": ok_channels, "failed_channels": fail_channels},
+                )
                 append_strategy_log(
                     int(strategy_id or 0), "signal",
                     f"Signal notification sent: {signal_type} {symbol} @ {price:.6f}, channels={','.join(ok_channels)}",
@@ -932,6 +946,20 @@ class PendingOrderWorker:
                         first_err = f"{c}:{err}"
                         break
                 self._mark_failed(order_id=order_id, error=first_err or "notify_failed")
+                append_strategy_execution_event(
+                    strategy_id=int(strategy_id or 0),
+                    event_type="notification_failed",
+                    status="failed",
+                    execution_mode=mode,
+                    symbol=str(symbol or ""),
+                    signal_type=str(signal_type or ""),
+                    decision_source="worker",
+                    price=float(price or 0.0),
+                    amount=float(amount or 0.0),
+                    pending_order_id=order_id,
+                    error=first_err or "notify_failed",
+                    result={"attempted_channels": attempted, "failed_channels": fail_channels},
+                )
                 append_strategy_log(
                     int(strategy_id or 0), "error",
                     f"Signal notification failed: {signal_type} {symbol}, error={first_err or 'notify_failed'}",
@@ -940,6 +968,18 @@ class PendingOrderWorker:
 
         if mode == "paper":
             self._mark_sent(order_id=order_id, note="paper_fill_recorded_by_strategy_executor")
+            append_strategy_execution_event(
+                strategy_id=int(strategy_id or 0),
+                event_type="paper_order_recorded",
+                status="sent",
+                execution_mode=mode,
+                symbol=str(symbol or ""),
+                signal_type=str(signal_type or ""),
+                decision_source="worker",
+                price=float(price or 0.0),
+                amount=float(amount or 0.0),
+                pending_order_id=order_id,
+            )
             append_strategy_log(
                 int(strategy_id or 0), "trade",
                 f"Paper order recorded: {signal_type} {symbol} @ {price:.6f}",
@@ -2221,6 +2261,28 @@ class PendingOrderWorker:
                     strategy_id, "trade",
                     f"Trade executed: {signal_type} {symbol} filled={filled:.6f} @ {avg_price:.6f}{_fee_str}{_profit_str}{_reason_str} (exchange={res.exchange_id})",
                 )
+                append_strategy_execution_event(
+                    strategy_id=int(strategy_id),
+                    event_type="trade_executed",
+                    status="filled" if filled > 0 else "sent",
+                    execution_mode="live",
+                    symbol=str(symbol),
+                    signal_type=str(signal_type),
+                    decision_source="exchange",
+                    reason=str(payload.get("reason") or ""),
+                    price=float(avg_price if avg_price > 0 else ref_price),
+                    amount=float(filled if filled > 0 else amount),
+                    pending_order_id=int(order_id),
+                    exchange_id=str(res.exchange_id or ""),
+                    exchange_order_id=str(res.exchange_order_id or ""),
+                    result={
+                        "filled": filled,
+                        "avg_price": avg_price,
+                        "commission": float(total_fee or 0.0),
+                        "commission_ccy": str(fee_ccy or "").strip().upper(),
+                        "profit": profit,
+                    },
+                )
         except Exception as e:
             logger.warning(f"record_trade/update_position failed: pending_id={order_id}, err={e}")
 
@@ -2675,8 +2737,14 @@ class PendingOrderWorker:
         avg_price: float = 0.0,
         executed_at: Optional[int] = None,
     ) -> None:
+        order_info: Dict[str, Any] = {}
         with get_db_connection() as db:
             cur = db.cursor()
+            try:
+                cur.execute("SELECT * FROM pending_orders WHERE id = %s", (int(order_id),))
+                order_info = cur.fetchone() or {}
+            except Exception:
+                order_info = {}
             # Use NOW() for timestamp fields; executed_at is set to NOW() if provided, else NULL
             cur.execute(
                 """
@@ -2708,10 +2776,45 @@ class PendingOrderWorker:
             )
             db.commit()
             cur.close()
+        try:
+            payload = {}
+            raw_payload = order_info.get("payload_json") if isinstance(order_info, dict) else ""
+            if isinstance(raw_payload, str) and raw_payload.strip():
+                payload = json.loads(raw_payload) or {}
+            strategy_id = int((payload or {}).get("strategy_id") or order_info.get("strategy_id") or 0)
+            if strategy_id > 0:
+                append_strategy_execution_event(
+                    strategy_id=strategy_id,
+                    event_type="order_sent",
+                    status="sent",
+                    execution_mode=str((payload or {}).get("execution_mode") or order_info.get("execution_mode") or ""),
+                    symbol=str((payload or {}).get("symbol") or order_info.get("symbol") or ""),
+                    signal_type=str((payload or {}).get("signal_type") or order_info.get("signal_type") or ""),
+                    decision_source="worker",
+                    reason=str(note or ""),
+                    price=float(avg_price or (payload or {}).get("price") or order_info.get("price") or 0.0),
+                    amount=float(filled or (payload or {}).get("amount") or order_info.get("amount") or 0.0),
+                    pending_order_id=int(order_id),
+                    exchange_id=str(exchange_id or ""),
+                    exchange_order_id=str(exchange_order_id or ""),
+                    result={
+                        "filled": float(filled or 0.0),
+                        "avg_price": float(avg_price or 0.0),
+                        "exchange_response_json": str(exchange_response_json or "")[:4000],
+                    },
+                )
+        except Exception:
+            pass
 
     def _mark_failed(self, order_id: int, error: str) -> None:
+        order_info: Dict[str, Any] = {}
         with get_db_connection() as db:
             cur = db.cursor()
+            try:
+                cur.execute("SELECT * FROM pending_orders WHERE id = %s", (int(order_id),))
+                order_info = cur.fetchone() or {}
+            except Exception:
+                order_info = {}
             cur.execute(
                 """
                 UPDATE pending_orders
@@ -2724,6 +2827,28 @@ class PendingOrderWorker:
             )
             db.commit()
             cur.close()
+        try:
+            payload = {}
+            raw_payload = order_info.get("payload_json") if isinstance(order_info, dict) else ""
+            if isinstance(raw_payload, str) and raw_payload.strip():
+                payload = json.loads(raw_payload) or {}
+            strategy_id = int((payload or {}).get("strategy_id") or order_info.get("strategy_id") or 0)
+            if strategy_id > 0:
+                append_strategy_execution_event(
+                    strategy_id=strategy_id,
+                    event_type="order_failed",
+                    status="failed",
+                    execution_mode=str((payload or {}).get("execution_mode") or order_info.get("execution_mode") or ""),
+                    symbol=str((payload or {}).get("symbol") or order_info.get("symbol") or ""),
+                    signal_type=str((payload or {}).get("signal_type") or order_info.get("signal_type") or ""),
+                    decision_source="worker",
+                    price=float((payload or {}).get("price") or order_info.get("price") or 0.0),
+                    amount=float((payload or {}).get("amount") or order_info.get("amount") or 0.0),
+                    pending_order_id=int(order_id),
+                    error=str(error or "failed"),
+                )
+        except Exception:
+            pass
 
     def _mark_deferred(self, order_id: int, reason: str) -> None:
         with get_db_connection() as db:

@@ -449,6 +449,43 @@ CREATE INDEX IF NOT EXISTS idx_strategy_logs_strategy_id ON qd_strategy_logs(str
 CREATE INDEX IF NOT EXISTS idx_strategy_logs_timestamp ON qd_strategy_logs(timestamp);
 
 -- =============================================================================
+-- 6c. Structured strategy execution events (analysis / AI feedback)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS qd_strategy_execution_events (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL DEFAULT 1 REFERENCES qd_users(id) ON DELETE CASCADE,
+    strategy_id INTEGER NOT NULL REFERENCES qd_strategies_trading(id) ON DELETE CASCADE,
+    event_type VARCHAR(40) NOT NULL,
+    status VARCHAR(30) DEFAULT '',
+    execution_mode VARCHAR(20) DEFAULT '',
+    symbol VARCHAR(50) DEFAULT '',
+    signal_type VARCHAR(40) DEFAULT '',
+    decision_source VARCHAR(40) DEFAULT '',
+    reason TEXT DEFAULT '',
+    confidence DOUBLE PRECISION,
+    price DECIMAL(24, 10),
+    amount DECIMAL(24, 10),
+    position_state VARCHAR(20) DEFAULT '',
+    pending_order_id BIGINT,
+    trade_id BIGINT,
+    exchange_id VARCHAR(40) DEFAULT '',
+    exchange_order_id VARCHAR(120) DEFAULT '',
+    error TEXT DEFAULT '',
+    context_json JSONB DEFAULT '{}'::jsonb,
+    execution_json JSONB DEFAULT '{}'::jsonb,
+    result_json JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_execution_events_strategy_time
+    ON qd_strategy_execution_events(strategy_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_strategy_execution_events_user_time
+    ON qd_strategy_execution_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_strategy_execution_events_order
+    ON qd_strategy_execution_events(pending_order_id);
+
+-- =============================================================================
 -- 7. Indicator Codes
 -- =============================================================================
 

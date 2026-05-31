@@ -22,6 +22,7 @@ import numpy as np
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
 from app.utils.strategy_runtime_logs import append_strategy_log
+from app.utils.strategy_execution_events import append_strategy_execution_event
 from app.data_sources import DataSourceFactory, UnsupportedMarketError
 from app.services.kline import KlineService
 from app.services.indicator_params import IndicatorParamsParser, IndicatorCaller
@@ -3036,13 +3037,57 @@ class TradingExecutor:
         try:
             # Hard state-machine guard (double safety in addition to loop-level filtering).
             state = self._position_state(current_positions)
+            append_strategy_execution_event(
+                strategy_id=strategy_id,
+                event_type="signal_received",
+                status="evaluating",
+                execution_mode=execution_mode,
+                symbol=symbol,
+                signal_type=signal_type,
+                decision_source="strategy",
+                price=float(current_price or 0.0),
+                position_state=state,
+                context={
+                    "strategy_name": strategy_name,
+                    "market_type": market_type,
+                    "market_category": market_category,
+                    "trade_direction": trade_direction,
+                    "leverage": leverage,
+                    "signal_ts": int(signal_ts or 0),
+                    "positions_before": current_positions or [],
+                },
+            )
             if not self._is_signal_allowed(state, signal_type):
                 append_strategy_log(strategy_id, "info", f"Signal filtered by state machine: {signal_type} (state={state})")
+                append_strategy_execution_event(
+                    strategy_id=strategy_id,
+                    event_type="signal_rejected",
+                    status="rejected",
+                    execution_mode=execution_mode,
+                    symbol=symbol,
+                    signal_type=signal_type,
+                    decision_source="state_machine",
+                    reason=f"signal_not_allowed_in_state:{state}",
+                    price=float(current_price or 0.0),
+                    position_state=state,
+                )
                 return False
 
             # 1. 检查交易方向限制
             if market_type == 'spot' and 'short' in signal_type:
                  append_strategy_log(strategy_id, "info", f"Signal rejected: spot market does not support {signal_type}")
+                 append_strategy_execution_event(
+                     strategy_id=strategy_id,
+                     event_type="signal_rejected",
+                     status="rejected",
+                     execution_mode=execution_mode,
+                     symbol=symbol,
+                     signal_type=signal_type,
+                     decision_source="market_rule",
+                     reason="spot_market_short_not_supported",
+                     price=float(current_price or 0.0),
+                     position_state=state,
+                 )
                  return False
 
             sig = (signal_type or "").strip().lower()
@@ -3055,6 +3100,18 @@ class TradingExecutor:
                     strategy_id,
                     "info",
                     f"Paper fill rejected: CNStock supports long-only signals, got {signal_type}",
+                )
+                append_strategy_execution_event(
+                    strategy_id=strategy_id,
+                    event_type="signal_rejected",
+                    status="rejected",
+                    execution_mode=execution_mode,
+                    symbol=symbol,
+                    signal_type=sig,
+                    decision_source="paper_broker",
+                    reason="cnstock_long_only_signal",
+                    price=float(current_price or 0.0),
+                    position_state=state,
                 )
                 return False
 
@@ -3097,6 +3154,19 @@ class TradingExecutor:
                         strategy_id, "info",
                         f"AI filter blocked entry: {sig} {symbol}, decision={ai_decision}, reason={reason}",
                     )
+                    append_strategy_execution_event(
+                        strategy_id=strategy_id,
+                        event_type="signal_rejected",
+                        status="rejected",
+                        execution_mode=execution_mode,
+                        symbol=symbol,
+                        signal_type=sig,
+                        decision_source="ai_filter",
+                        reason=str(reason),
+                        price=float(current_price or 0.0),
+                        position_state=state,
+                        context={"ai_decision": ai_decision, "signal_ts": int(signal_ts or 0)},
+                    )
                     return False
 
             # 1.2 Max position limit (risk control)
@@ -3109,6 +3179,19 @@ class TradingExecutor:
                             strategy_id, "info",
                             f"Risk: max_position reached ({cur_pos_value:.2f} >= {max_pos:.2f}), blocking {sig}",
                         )
+                        append_strategy_execution_event(
+                            strategy_id=strategy_id,
+                            event_type="signal_rejected",
+                            status="rejected",
+                            execution_mode=execution_mode,
+                            symbol=symbol,
+                            signal_type=sig,
+                            decision_source="risk",
+                            reason="max_position_reached",
+                            price=float(current_price or 0.0),
+                            position_state=state,
+                            context={"current_position_value": cur_pos_value, "max_position": max_pos},
+                        )
                         return False
 
             # 1.3 Max daily loss limit (risk control)
@@ -3120,6 +3203,19 @@ class TradingExecutor:
                         append_strategy_log(
                             strategy_id, "info",
                             f"Risk: max_daily_loss reached (loss={abs(daily_pnl):.2f} >= {max_daily:.2f}), blocking {sig}",
+                        )
+                        append_strategy_execution_event(
+                            strategy_id=strategy_id,
+                            event_type="signal_rejected",
+                            status="rejected",
+                            execution_mode=execution_mode,
+                            symbol=symbol,
+                            signal_type=sig,
+                            decision_source="risk",
+                            reason="max_daily_loss_reached",
+                            price=float(current_price or 0.0),
+                            position_state=state,
+                            context={"daily_pnl": daily_pnl, "max_daily_loss": max_daily},
                         )
                         return False
 
@@ -3209,6 +3305,19 @@ class TradingExecutor:
                     amount = full_size
 
             if amount <= 0 and ('open' in signal_type or 'add' in signal_type):
+                append_strategy_execution_event(
+                    strategy_id=strategy_id,
+                    event_type="signal_rejected",
+                    status="rejected",
+                    execution_mode=execution_mode,
+                    symbol=symbol,
+                    signal_type=signal_type,
+                    decision_source="sizing",
+                    reason="non_positive_order_amount",
+                    price=float(current_price or 0.0),
+                    amount=float(amount or 0.0),
+                    position_state=state,
+                )
                 return False
 
             fill_price = float(current_price or 0.0)
@@ -3229,6 +3338,19 @@ class TradingExecutor:
                         strategy_id,
                         "info",
                         f"Paper fill rejected: {paper_fill.rejection} ({signal_type} {symbol})",
+                    )
+                    append_strategy_execution_event(
+                        strategy_id=strategy_id,
+                        event_type="signal_rejected",
+                        status="rejected",
+                        execution_mode=execution_mode,
+                        symbol=symbol,
+                        signal_type=signal_type,
+                        decision_source="paper_broker",
+                        reason=str(paper_fill.rejection or "paper_fill_rejected"),
+                        price=float(current_price or 0.0),
+                        amount=float(amount or 0.0),
+                        position_state=state,
                     )
                     return False
                 amount = paper_fill.amount
@@ -3257,6 +3379,31 @@ class TradingExecutor:
             )
             
             if order_result and order_result.get('success'):
+                pending_order_id = order_result.get("pending_order_id")
+                append_strategy_execution_event(
+                    strategy_id=strategy_id,
+                    event_type="order_enqueued",
+                    status="pending" if pending_order_id else "deduplicated",
+                    execution_mode=execution_mode,
+                    symbol=symbol,
+                    signal_type=signal_type,
+                    decision_source="executor",
+                    reason=signal_reason,
+                    price=float(fill_price or 0.0),
+                    amount=float(amount or 0.0),
+                    position_state=state,
+                    pending_order_id=int(pending_order_id) if pending_order_id else None,
+                    execution={
+                        "market_type": market_type,
+                        "market_category": market_category,
+                        "leverage": leverage,
+                        "stop_loss_price": stop_loss_price,
+                        "take_profit_price": take_profit_price,
+                        "trailing_stop_price": trailing_stop_price,
+                        "signal_ts": int(signal_ts or 0),
+                    },
+                    result=order_result,
+                )
                 # For live execution, the order is only enqueued here.
                 # The actual fill/trade/position updates are performed by PendingOrderWorker.
                 if str(execution_mode or "").strip().lower() == "live":
@@ -3301,6 +3448,25 @@ class TradingExecutor:
                         strategy_id, "trade",
                         f"{_prefix}Open position: {signal_type} {symbol} amount={amount:.6f} @ {fill_price:.6f}, fee={_est_commission:.6f}",
                     )
+                    append_strategy_execution_event(
+                        strategy_id=strategy_id,
+                        event_type="trade_recorded",
+                        status="filled",
+                        execution_mode=execution_mode,
+                        symbol=symbol,
+                        signal_type=signal_type,
+                        decision_source="local_simulation",
+                        price=float(fill_price or 0.0),
+                        amount=float(amount or 0.0),
+                        position_state=side,
+                        pending_order_id=int(pending_order_id) if pending_order_id else None,
+                        result={
+                            "commission": _est_commission,
+                            "profit": None,
+                            "position_size": new_size,
+                            "entry_price": new_entry,
+                        },
+                    )
                 elif sig.startswith("reduce_"):
                     # Partial scale-out: reduce position size, keep entry price unchanged.
                     # 信号模式下计算部分平仓盈亏
@@ -3339,6 +3505,20 @@ class TradingExecutor:
                         strategy_id, "trade",
                         f"{_prefix}Reduce position: {signal_type} {symbol} amount={amount:.6f} @ {fill_price:.6f}, fee={_est_commission:.6f}{_pstr}",
                     )
+                    append_strategy_execution_event(
+                        strategy_id=strategy_id,
+                        event_type="trade_recorded",
+                        status="filled",
+                        execution_mode=execution_mode,
+                        symbol=symbol,
+                        signal_type=signal_type,
+                        decision_source="local_simulation",
+                        price=float(fill_price or 0.0),
+                        amount=float(amount or 0.0),
+                        position_state=side,
+                        pending_order_id=int(pending_order_id) if pending_order_id else None,
+                        result={"commission": _est_commission, "profit": reduce_profit, "remaining_size": new_size},
+                    )
                 elif 'close' in sig:
                     # 信号模式下计算平仓盈亏
                     side = 'short' if 'short' in signal_type else 'long'
@@ -3366,16 +3546,55 @@ class TradingExecutor:
                         strategy_id, "trade",
                         f"{_prefix}Close position: {signal_type} {symbol} amount={amount:.6f} @ {fill_price:.6f}, fee={_est_commission:.6f}{_pstr}",
                     )
+                    append_strategy_execution_event(
+                        strategy_id=strategy_id,
+                        event_type="trade_recorded",
+                        status="filled",
+                        execution_mode=execution_mode,
+                        symbol=symbol,
+                        signal_type=signal_type,
+                        decision_source="local_simulation",
+                        price=float(fill_price or 0.0),
+                        amount=float(amount or 0.0),
+                        position_state="flat",
+                        pending_order_id=int(pending_order_id) if pending_order_id else None,
+                        result={"commission": _est_commission, "profit": close_profit},
+                    )
 
                 return True
 
             _err = (order_result or {}).get("error", "unknown")
             append_strategy_log(strategy_id, "error", f"Order enqueue failed: {signal_type} {symbol}, error={_err}")
+            append_strategy_execution_event(
+                strategy_id=strategy_id,
+                event_type="order_enqueue_failed",
+                status="failed",
+                execution_mode=execution_mode,
+                symbol=symbol,
+                signal_type=signal_type,
+                decision_source="executor",
+                price=float(fill_price or 0.0),
+                amount=float(amount or 0.0),
+                position_state=state,
+                error=str(_err),
+            )
             return False
             
         except Exception as e:
             logger.error(f"Failed to execute signal: {e}")
             append_strategy_log(strategy_id, "error", f"Signal execution exception: {signal_type} {symbol}, {e}")
+            append_strategy_execution_event(
+                strategy_id=strategy_id,
+                event_type="signal_exception",
+                status="failed",
+                execution_mode=execution_mode,
+                symbol=symbol,
+                signal_type=signal_type,
+                decision_source="executor",
+                price=float(current_price or 0.0),
+                amount=float(locals().get("amount") or 0.0),
+                error=str(e),
+            )
             return False
 
     def _is_entry_ai_filter_enabled(self, *, ai_model_config: Optional[Dict[str, Any]], trading_config: Optional[Dict[str, Any]]) -> bool:
@@ -3654,6 +3873,7 @@ class TradingExecutor:
             return {
                 'success': True,
                 'pending': bool(pending_flag),
+                'pending_order_id': pending_id,
                 'order_id': f"pending_{pending_id or int(time.time()*1000)}",
                 'filled_amount': 0 if pending_flag else amount,
                 'filled_base_amount': 0 if pending_flag else amount,

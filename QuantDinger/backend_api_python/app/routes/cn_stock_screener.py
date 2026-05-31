@@ -15,6 +15,8 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 cn_stock_screener_bp = Blueprint("cn_stock_screener", __name__)
+SYNC_AI_MAX_TOP_N = 0
+SYNC_ENRICHMENT_MAX_TOP_N = 3
 
 
 def _int_payload(data, key, default):
@@ -38,17 +40,33 @@ def run_screener():
     try:
         data = request.get_json() or {}
         factors = data.get("factors") if isinstance(data.get("factors"), dict) else {}
-        factors.setdefault("include_enrichment", bool(data.get("include_enrichment", True)))
+        include_enrichment = bool(data.get("include_enrichment", False))
+        factors["include_enrichment"] = include_enrichment
+        if include_enrichment:
+            factors["enrichment_top_n"] = min(
+                _int_payload(data, "enrichment_top_n", SYNC_ENRICHMENT_MAX_TOP_N),
+                SYNC_ENRICHMENT_MAX_TOP_N,
+            )
+        requested_ai_top_n = _int_payload(data, "ai_top_n", 0)
+        sync_ai = bool(data.get("sync_ai", False))
+        ai_top_n = min(requested_ai_top_n, SYNC_AI_MAX_TOP_N) if sync_ai else 0
         service = get_cn_stock_screener_service()
         result = service.run(
             user_id=int(g.user_id),
             timeframe=(data.get("timeframe") or "1D").strip(),
             candidate_limit=_int_payload(data, "candidate_limit", 80),
             top_n=_int_payload(data, "top_n", 10),
-            ai_top_n=_int_payload(data, "ai_top_n", 5),
+            ai_top_n=ai_top_n,
             strategy_feedback_days=_int_payload(data, "strategy_feedback_days", 30),
             factors=factors,
         )
+        result["sync_limits"] = {
+            "requested_ai_top_n": requested_ai_top_n,
+            "effective_ai_top_n": ai_top_n,
+            "include_enrichment": include_enrichment,
+            "max_enrichment_top_n": SYNC_ENRICHMENT_MAX_TOP_N,
+            "reason": "Deep AI and batch enrichment are capped on the sync HTTP endpoint to avoid gateway timeouts.",
+        }
         return jsonify({"code": 1, "msg": "success", "data": result})
     except Exception as exc:
         logger.error("CNStock screener run failed: %s", exc)

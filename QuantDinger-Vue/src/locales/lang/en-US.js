@@ -40,6 +40,7 @@ const locale = {
   'menu.dashboard.tradingAssistant': 'Strategy & Live',
   'menu.dashboard.backtestCenter': 'Backtest Center',
   'menu.dashboard.indicatorIde': 'Indicator IDE',
+  'menu.dashboard.cnStockScreener': 'A-Share Screener',
   'menu.dashboard.tradingBot': 'Trading Bot',
   'menu.dashboard.brokerAccounts': 'Live Broker Accounts',
   'menu.dashboard.scriptStrategies': 'Python Script Strategies',

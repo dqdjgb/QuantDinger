@@ -785,7 +785,34 @@ class MarketDataCollector:
                 result["earnings"] = self._build_earnings_from_statements(result["financial_statements"])
 
             if not parts and not td and not has_valuation:
-                return None
+                if market != "CNStock":
+                    return None
+
+            if market == "CNStock":
+                try:
+                    from app.data_sources.cn_stock_enrichment import fetch_money_flow, fetch_stock_profile
+
+                    profile = fetch_stock_profile(symbol)
+                    flow = fetch_money_flow(symbol)
+                    if profile:
+                        for src_key, dst_key in (
+                            ("pe_ratio", "pe_ratio"),
+                            ("pb_ratio", "pb_ratio"),
+                            ("market_cap", "market_cap"),
+                            ("dividend_yield", "dividend_yield"),
+                            ("52w_high", "52w_high"),
+                            ("52w_low", "52w_low"),
+                        ):
+                            if profile.get(src_key) is not None and result.get(dst_key) is None:
+                                result[dst_key] = profile[src_key]
+                        result["float_market_cap"] = profile.get("float_market_cap")
+                        result["turnover_rate"] = profile.get("turnover_rate")
+                        result["source"] += "+eastmoney_direct"
+                    if flow:
+                        result["money_flow"] = flow
+                        result["source"] += "+eastmoney_flow"
+                except Exception as e:
+                    logger.debug("CNStock enrichment fundamental failed %s:%s: %s", market, symbol, e)
             return result
         except Exception as e:
             logger.debug(f"CN/HK fundamental failed: {market}:{symbol}: {e}")
@@ -1706,7 +1733,21 @@ class MarketDataCollector:
                             row[k] = ex[k]
 
             if not parts and not td_profile and not row.get("industry"):
-                return None
+                if market != "CNStock":
+                    return None
+
+            if market == "CNStock":
+                try:
+                    from app.data_sources.cn_stock_enrichment import fetch_stock_profile
+
+                    profile = fetch_stock_profile(symbol)
+                    if profile:
+                        for key in ("name", "exchange", "industry", "market_cap", "float_market_cap", "currency"):
+                            if profile.get(key) and not row.get(key):
+                                row[key] = profile[key]
+                        row["source"] += "+eastmoney_direct"
+                except Exception as e:
+                    logger.debug("CNStock enrichment company failed %s:%s: %s", market, symbol, e)
             return row
         except Exception:
             return None
@@ -1875,6 +1916,22 @@ class MarketDataCollector:
         """
         news_list = []
         sentiment = {}
+
+        if market == "CNStock":
+            try:
+                from app.data_sources.cn_stock_enrichment import fetch_announcements, fetch_stock_news
+
+                stock_news = fetch_stock_news(symbol, name=company_name or "", limit=5)
+                announcements = fetch_announcements(symbol, limit=5)
+                news_list.extend(stock_news)
+                news_list.extend(announcements)
+                if stock_news or announcements:
+                    sentiment["cnstock_sources"] = {
+                        "eastmoney_news": len(stock_news),
+                        "cninfo_announcements": len(announcements),
+                    }
+            except Exception as e:
+                logger.debug("CNStock direct news fetch failed %s:%s: %s", market, symbol, e)
         
         # === 1) Finnhub 新闻 (美股首选) ===
         if self._finnhub_client:

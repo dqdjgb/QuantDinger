@@ -130,6 +130,26 @@ def test_run_skips_insufficient_kline_and_only_ai_analyzes_top_n(monkeypatch):
     assert result["items"][1]["ai_decision"] is None
 
 
+def test_run_respects_zero_ai_top_n(monkeypatch):
+    rows = {
+        "600519": _klines(start=10, step=0.3),
+        "600036": _klines(start=10, step=0.1),
+    }
+    fake_ai = _FakeFastAnalysis()
+    service = CNStockScreenerService(kline_service=_FakeKline(rows), fast_analysis_service=fake_ai)
+    monkeypatch.setattr(service, "get_candidates", lambda user_id, limit: [
+        {"market": "CNStock", "symbol": "600519", "name": "璐靛窞鑼呭彴"},
+        {"market": "CNStock", "symbol": "600036", "name": "鎷涘晢閾惰"},
+    ])
+    monkeypatch.setattr(service, "get_strategy_feedback", lambda user_id, days: {})
+
+    result = service.run(user_id=7, top_n=2, ai_top_n=0, candidate_limit=2)
+
+    assert result["ai_analyzed_count"] == 0
+    assert len(fake_ai.calls) == 0
+    assert all(item["ai_decision"] is None for item in result["items"])
+
+
 def test_strategy_feedback_is_neutral_when_absent():
     service = CNStockScreenerService(kline_service=_FakeKline({}))
     item = service.score_candidate(

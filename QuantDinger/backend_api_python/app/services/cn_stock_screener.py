@@ -90,10 +90,14 @@ class CNStockScreenerService:
     ) -> Dict[str, Any]:
         """Run rule-first screening and optional AI enrichment."""
         tf = (timeframe or DEFAULT_TIMEFRAME).strip() or DEFAULT_TIMEFRAME
-        candidate_limit = max(1, min(int(candidate_limit or DEFAULT_CANDIDATE_LIMIT), MAX_CANDIDATE_LIMIT))
-        top_n = max(1, min(int(top_n or DEFAULT_TOP_N), MAX_TOP_N))
-        ai_top_n = max(0, min(int(ai_top_n or DEFAULT_AI_TOP_N), MAX_AI_TOP_N, top_n))
-        strategy_feedback_days = max(1, min(int(strategy_feedback_days or DEFAULT_FEEDBACK_DAYS), 365))
+        candidate_limit_raw = DEFAULT_CANDIDATE_LIMIT if candidate_limit is None else candidate_limit
+        top_n_raw = DEFAULT_TOP_N if top_n is None else top_n
+        ai_top_n_raw = DEFAULT_AI_TOP_N if ai_top_n is None else ai_top_n
+        feedback_days_raw = DEFAULT_FEEDBACK_DAYS if strategy_feedback_days is None else strategy_feedback_days
+        candidate_limit = max(1, min(int(candidate_limit_raw), MAX_CANDIDATE_LIMIT))
+        top_n = max(1, min(int(top_n_raw), MAX_TOP_N))
+        ai_top_n = max(0, min(int(ai_top_n_raw), MAX_AI_TOP_N, top_n))
+        strategy_feedback_days = max(1, min(int(feedback_days_raw), 365))
         factors = factors or {}
 
         candidates = self.get_candidates(user_id=user_id, limit=candidate_limit)

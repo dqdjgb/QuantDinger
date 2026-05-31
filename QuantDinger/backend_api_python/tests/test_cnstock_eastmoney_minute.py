@@ -67,6 +67,25 @@ def test_cnstock_minute_falls_back_to_yfinance_then_akshare(monkeypatch):
     assert calls == ["eastmoney", "yfinance", "akshare"]
 
 
+def test_cnstock_minute_falls_back_when_source_has_only_one_bar(monkeypatch):
+    calls = []
+    one_bar = [{"time": 100, "open": 1, "high": 2, "low": 1, "close": 2, "volume": 10}]
+    fallback = [
+        {"time": 200, "open": 3, "high": 4, "low": 2, "close": 3.5, "volume": 20},
+        {"time": 300, "open": 3.5, "high": 5, "low": 3, "close": 4, "volume": 30},
+    ]
+
+    monkeypatch.setattr(cn_stock, "fetch_twelvedata_klines", lambda **kwargs: [])
+    monkeypatch.setattr(cn_stock, "fetch_eastmoney_minute_klines", lambda **kwargs: calls.append("eastmoney") or one_bar)
+    monkeypatch.setattr(cn_stock, "fetch_yfinance_klines", lambda **kwargs: calls.append("yfinance") or fallback)
+    monkeypatch.setattr(cn_stock, "fetch_akshare_minute_klines", lambda **kwargs: calls.append("akshare") or [])
+
+    rows = CNStockDataSource().get_kline("603618", "15m", 20)
+
+    assert rows == fallback
+    assert calls == ["eastmoney", "yfinance"]
+
+
 def test_eastmoney_three_minute_bars_merge_one_minute_response(monkeypatch):
     class DummyLimiter:
         def wait(self):

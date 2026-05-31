@@ -1150,13 +1150,20 @@ class TradingExecutor:
             # ============================================
             # logger.info(f"策略 {strategy_id} 初始化：获取历史K线数据...")
             history_limit = int(os.getenv('K_LINE_HISTORY_GET_NUMBER', 500))
-            klines = self._fetch_latest_kline(
-                symbol, timeframe, limit=history_limit, market_category=market_category,
+            klines, initial_kline_attempts, initial_kline_diagnostics = self._fetch_initial_kline_with_retries(
+                strategy_id, symbol, timeframe, limit=history_limit, market_category=market_category,
                 exchange_id=kline_exchange_id, market_type=kline_market_type,
             )
             if not klines or len(klines) < 2:
-                exit_reason = f"failed to fetch K-lines for {market_category}:{symbol} timeframe={timeframe}"
-                logger.error(f"Strategy {strategy_id} failed to fetch K-lines")
+                exit_reason = self._kline_fetch_failure_reason(
+                    market_category,
+                    symbol,
+                    timeframe,
+                    history_limit,
+                    initial_kline_attempts,
+                    initial_kline_diagnostics,
+                )
+                logger.error(f"Strategy {strategy_id} {exit_reason}")
                 return
             logger.info(rf'Strategy {strategy_id} history kline number: {len(klines)}')
             
@@ -2014,6 +2021,111 @@ class TradingExecutor:
                 f"K-lines fall back to Settings default ({default_ex}), "
                 "may differ from execution venue — bind an exchange for live trading"
             )
+
+    @staticmethod
+    def _is_cnstock_intraday_timeframe(market_category: str, timeframe: str) -> bool:
+        if (market_category or "").strip() != "CNStock":
+            return False
+        tf = (timeframe or "").strip()
+        return tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H", "1h", "4h")
+
+    @staticmethod
+    def _cnstock_initial_kline_attempts(market_category: str, timeframe: str) -> int:
+        if not TradingExecutor._is_cnstock_intraday_timeframe(market_category, timeframe):
+            return 1
+        try:
+            attempts = int(os.getenv("CNSTOCK_INITIAL_KLINE_RETRIES", "3"))
+        except Exception:
+            attempts = 3
+        return max(1, attempts)
+
+    @staticmethod
+    def _cnstock_initial_kline_retry_delay() -> float:
+        try:
+            delay = float(os.getenv("CNSTOCK_INITIAL_KLINE_RETRY_DELAY_SEC", "2"))
+        except Exception:
+            delay = 2.0
+        return max(0.0, delay)
+
+    @staticmethod
+    def _format_kline_fetch_diagnostics(market_category: str) -> str:
+        if (market_category or "").strip() != "CNStock":
+            return ""
+        try:
+            source = DataSourceFactory.get_source("CNStock")
+            formatter = getattr(source, "format_last_kline_diagnostics", None)
+            if callable(formatter):
+                return formatter() or ""
+        except Exception as e:
+            return f"diagnostics_unavailable:{e}"
+        return ""
+
+    def _fetch_initial_kline_with_retries(
+        self,
+        strategy_id: int,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        market_category: str,
+        exchange_id: Optional[str] = None,
+        market_type: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int, str]:
+        attempts = self._cnstock_initial_kline_attempts(market_category, timeframe)
+        retry_delay = self._cnstock_initial_kline_retry_delay()
+        last_klines: List[Dict[str, Any]] = []
+        diagnostics = ""
+
+        for attempt in range(1, attempts + 1):
+            last_klines = self._fetch_latest_kline(
+                symbol,
+                timeframe,
+                limit=limit,
+                market_category=market_category,
+                exchange_id=exchange_id,
+                market_type=market_type,
+            )
+            diagnostics = self._format_kline_fetch_diagnostics(market_category)
+            if last_klines and len(last_klines) >= 2:
+                if attempt > 1:
+                    logger.info(
+                        "Strategy %s initial K-lines recovered after %s/%s attempts for %s:%s tf=%s; diagnostics=%s",
+                        strategy_id, attempt, attempts, market_category, symbol, timeframe, diagnostics or "none",
+                    )
+                return last_klines, attempt, diagnostics
+
+            if attempt < attempts:
+                count = len(last_klines or [])
+                msg = (
+                    f"Initial K-line fetch returned {count} bars for "
+                    f"{market_category}:{symbol} timeframe={timeframe} "
+                    f"(attempt {attempt}/{attempts}); retrying"
+                )
+                if diagnostics:
+                    msg += f"; diagnostics={diagnostics}"
+                logger.warning("Strategy %s %s", strategy_id, msg)
+                try:
+                    append_strategy_log(strategy_id, "warning", msg)
+                except Exception:
+                    pass
+                if retry_delay > 0:
+                    time.sleep(retry_delay)
+
+        return last_klines or [], attempts, diagnostics
+
+    @staticmethod
+    def _kline_fetch_failure_reason(
+        market_category: str,
+        symbol: str,
+        timeframe: str,
+        limit: int,
+        attempts: int,
+        diagnostics: str,
+    ) -> str:
+        diag = diagnostics or "unavailable"
+        return (
+            f"failed to fetch K-lines for {market_category}:{symbol} "
+            f"timeframe={timeframe} limit={limit} attempts={attempts}; diagnostics={diag}"
+        )
 
     def _fetch_latest_kline(
         self,

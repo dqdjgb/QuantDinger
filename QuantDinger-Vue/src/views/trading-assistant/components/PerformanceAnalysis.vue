@@ -101,11 +101,13 @@
 
 <script>
 import { getStrategyDryRunDeviation, getStrategyEquityCurve, getStrategyTrades } from '@/api/strategy'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 export default {
   name: 'PerformanceAnalysis',
   props: {
     strategyId: { type: [Number, String], default: null },
+    marketCategory: { type: String, default: 'Crypto' },
     isDark: { type: Boolean, default: false }
   },
   data () {
@@ -268,10 +270,8 @@ export default {
       return `${sign}${v.toFixed(1)} bps`
     },
     formatMoney (value) {
-      if (value == null || isNaN(value)) return '—'
-      const v = Number(value)
-      const sign = v < 0 ? '-' : ''
-      return `${sign}$${Math.abs(v).toFixed(2)}`
+      if (value == null || isNaN(value)) return '--'
+      return formatMarketMoney(value, this.marketCategory)
     },
     formatSeconds (value) {
       if (value == null || isNaN(value)) return '—'

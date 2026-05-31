@@ -47,7 +47,7 @@
           </a-select>
         </div>
         <div class="qt-price-display" :class="priceChangeClass">
-          <span class="qt-current-price">${{ formatPrice(currentPrice) }}</span>
+          <span class="qt-current-price">{{ formatQuoteMoney(currentPrice, pricePrecision) }}</span>
         </div>
       </div>
 
@@ -99,7 +99,7 @@
               </template>
               <template v-else>
                 <span class="qt-balance-label">{{ $t('quickTrade.available') }}:</span>
-                <span class="qt-balance-value">${{ formatPrice(balance.available) }}</span>
+                <span class="qt-balance-value">{{ formatQuoteMoney(balance.available) }}</span>
               </template>
             </div>
           </div>
@@ -150,9 +150,9 @@
             />
           </div>
 
-          <!-- Amount (USDT) -->
+          <!-- Amount -->
           <div class="qt-section qt-amount-block">
-            <div class="qt-label">{{ $t('quickTrade.amount') }} (USDT)</div>
+            <div class="qt-label">{{ $t('quickTrade.amount') }} ({{ accountCurrencyLabel }})</div>
             <a-input-number
               v-model="amount"
               :min="1"
@@ -309,11 +309,11 @@
                 </div>
                 <div class="qt-pos-row">
                   <span>{{ $t('quickTrade.entryPrice') }}</span>
-                  <span>${{ formatPrice(pos.entry_price) }}</span>
+                  <span>{{ formatQuoteMoney(pos.entry_price, pricePrecision) }}</span>
                 </div>
                 <div class="qt-pos-row" v-if="pos.mark_price">
                   <span>{{ $t('quickTrade.markPrice') }}</span>
-                  <span>${{ formatPrice(pos.mark_price) }}</span>
+                  <span>{{ formatQuoteMoney(pos.mark_price, pricePrecision) }}</span>
                 </div>
                 <div class="qt-pos-row" v-if="pos.leverage && pos.leverage > 1">
                   <span>{{ $t('quickTrade.leverage') }}</span>
@@ -322,7 +322,7 @@
                 <div class="qt-pos-row">
                   <span>{{ $t('quickTrade.unrealizedPnl') }}</span>
                   <span :class="pos.unrealized_pnl >= 0 ? 'qt-green' : 'qt-red'">
-                    ${{ formatPrice(pos.unrealized_pnl) }}
+                    {{ formatQuoteMoney(pos.unrealized_pnl) }}
                   </span>
                 </div>
                 <a-button
@@ -361,7 +361,7 @@
                         {{ t.side === 'buy' ? 'LONG' : 'SHORT' }}
                       </a-tag>
                       <span class="qt-trade-symbol">{{ t.symbol }}</span>
-                      <span class="qt-trade-amount">${{ formatPrice(t.amount) }}</span>
+                      <span class="qt-trade-amount">{{ formatQuoteMoney(t.amount) }}</span>
                     </div>
                     <div class="qt-trade-meta">
                       <a-tag :color="t.status === 'filled' ? '#52c41a' : t.status === 'failed' ? '#f5222d' : '#faad14'" size="small">
@@ -395,6 +395,7 @@ import { placeQuickOrder, getQuickTradeBalance, getQuickTradePosition, getQuickT
 import { searchSymbols, getWatchlist } from '@/api/market'
 import { getUserInfo } from '@/api/login'
 import request from '@/utils/request'
+import { formatMarketMoney, getMarketCurrencyLabel } from '@/utils/marketCurrency'
 
 export default {
   name: 'QuickTradePanel',
@@ -405,6 +406,7 @@ export default {
     presetSide: { type: String, default: '' }, // 'buy' or 'sell' — pre-filled from AI signal
     presetPrice: { type: Number, default: 0 },
     source: { type: String, default: 'manual' }, // ai_radar / ai_analysis / indicator / manual
+    marketCategory: { type: String, default: 'Crypto' },
     marketType: { type: String, default: 'swap' }, // swap / spot
     embedded: { type: Boolean, default: false },
     /** 指标 IDE 右侧浮动面板：更紧凑的分区与卡片样式 */
@@ -467,6 +469,9 @@ export default {
     },
     effectiveMarketType () {
       return this.tradeMode
+    },
+    accountCurrencyLabel () {
+      return getMarketCurrencyLabel(this.marketCategory, this.effectiveMarketType)
     },
     priceStep () {
       if (this.currentPrice > 10000) return 1
@@ -1005,6 +1010,33 @@ export default {
       if (Math.abs(v) >= 100) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       if (Math.abs(v) >= 1) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
       return v.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 })
+    },
+    formatQuoteMoney (val, decimals = null) {
+      const v = parseFloat(val || 0)
+      let min = 2
+      let max = 6
+      if (decimals != null) {
+        min = decimals
+        max = decimals
+      } else if (Math.abs(v) >= 10000) {
+        min = 0
+        max = 0
+      } else if (Math.abs(v) >= 100) {
+        min = 2
+        max = 2
+      } else if (Math.abs(v) >= 1) {
+        min = 2
+        max = 4
+      } else {
+        min = 4
+        max = 6
+      }
+      return formatMarketMoney(v, this.marketCategory, {
+        accountCurrency: true,
+        marketType: this.effectiveMarketType,
+        minimumFractionDigits: min,
+        maximumFractionDigits: max
+      })
     },
     formatTime (ts) {
       if (!ts) return ''

@@ -516,6 +516,7 @@
                   <a-tab-pane key="performance" :tab="$t('trading-assistant.tabs.performance')">
                     <performance-analysis
                       :strategy-id="selectedStrategy.id"
+                      :market-category="selectedStrategy.market_category || 'Crypto'"
                       :is-dark="isDarkTheme" />
                   </a-tab-pane>
                   <a-tab-pane key="logs" :tab="$t('trading-assistant.tabs.logs')">

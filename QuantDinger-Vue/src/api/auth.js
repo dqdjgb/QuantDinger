@@ -81,6 +81,18 @@ export function loginWithCode (data) {
 }
 
 /**
+ * Complete password login with second-factor email code
+ * @param {Object} data - { challenge, code }
+ */
+export function verifyPasswordLogin2fa (data) {
+  return request({
+    url: '/api/auth/login/2fa',
+    method: 'post',
+    data
+  })
+}
+
+/**
  * User registration
  * @param {Object} data - { email, code, username, password, turnstile_token }
  */

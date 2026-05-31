@@ -1,6 +1,7 @@
 import storage from 'store'
 import expirePlugin from 'store/plugins/expire'
 import { login, logout, getUserInfo } from '@/api/login'
+import { verifyPasswordLogin2fa } from '@/api/auth'
 import { ACCESS_TOKEN, USER_INFO, USER_ROLES } from '@/store/mutation-types'
 import { welcome } from '@/utils/util'
 
@@ -27,6 +28,37 @@ function getStoredRoles () {
 function getStoredToken () {
   const token = storage.get(ACCESS_TOKEN)
   return typeof token === 'string' ? token : (token && token.token) ? token.token : token
+}
+
+function persistLoginResult (commit, dispatch, result) {
+  const token = result.token
+  const info = result.userinfo || {}
+
+  const expiresAt = new Date().getTime() + 7 * 24 * 60 * 60 * 1000
+  storage.set(ACCESS_TOKEN, token, expiresAt)
+  commit('SET_TOKEN', token)
+  commit('SET_INFO', info)
+  storage.set(USER_INFO, info, expiresAt)
+
+  const name = info.nickname || info.username || 'User'
+  commit('SET_NAME', { name: name, welcome: welcome() })
+  commit('SET_AVATAR', info.avatar || '/avatar2.jpg')
+
+  let roles = [DEFAULT_ROLE]
+  if (info.role) {
+    const roleId = info.role.id || info.role
+    const permissions = info.role.permissions || []
+    roles = [{
+      id: roleId,
+      permissionList: permissions.length > 0 ? permissions : ['dashboard']
+    }]
+  }
+  commit('SET_ROLES', roles)
+  storage.set(USER_ROLES, roles, expiresAt)
+
+  if (dispatch) {
+    dispatch('ResetRoutes')
+  }
 }
 
 const initialInfo = getStoredInfo()
@@ -76,6 +108,10 @@ const user = {
           // 适配 Python 后端响应格式
           if (response && response.code === 1 && response.data) {
             const result = response.data
+            if (result.requires_2fa) {
+              resolve(response)
+              return
+            }
             const token = result.token
             const info = result.userinfo || {}
 
@@ -118,6 +154,21 @@ const user = {
     },
 
     // Web3 登录完成后的统一处理
+    CompletePasswordLogin2fa ({ commit, dispatch }, payload) {
+      return new Promise((resolve, reject) => {
+        verifyPasswordLogin2fa(payload).then(response => {
+          if (response && response.code === 1 && response.data && response.data.token) {
+            persistLoginResult(commit, dispatch, response.data)
+            resolve(response)
+          } else {
+            reject(new Error((response && response.msg) || 'Verification failed'))
+          }
+        }).catch(error => {
+          reject(error)
+        })
+      })
+    },
+
     Web3LoginFinalize ({ commit }, payload) {
       return new Promise((resolve, reject) => {
         try {

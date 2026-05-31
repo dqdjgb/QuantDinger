@@ -16,6 +16,7 @@ from app.services.strategy_snapshot import StrategySnapshotResolver
 from app import get_trading_executor
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
+from app.utils.strategy_execution_events import list_strategy_execution_events
 
 try:
     from psycopg2.errors import UndefinedTable as PgUndefinedTable
@@ -2151,4 +2152,45 @@ def get_strategy_logs():
         if 'qd_strategy_logs' in el and ('does not exist' in el or 'no such table' in el):
             return jsonify({'code': 1, 'msg': 'success', 'data': []})
         logger.error(f"get_strategy_logs failed: {str(e)}")
+        return jsonify({'code': 0, 'msg': str(e)}), 500
+
+
+@strategy_bp.route('/strategies/execution-events', methods=['GET'])
+@login_required
+def get_strategy_execution_events():
+    """Get structured strategy decision/execution feedback events."""
+    try:
+        user_id = g.user_id
+        strategy_id = request.args.get('id')
+        limit = int(request.args.get('limit', 200))
+        event_type = (request.args.get('event_type') or '').strip()
+        symbol = (request.args.get('symbol') or '').strip()
+        if not strategy_id:
+            return jsonify({'code': 0, 'msg': 'Strategy ID required'})
+
+        st = get_strategy_service().get_strategy(int(strategy_id), user_id=user_id)
+        if not st:
+            return jsonify({'code': 0, 'msg': 'Strategy not found'}), 404
+
+        rows = list_strategy_execution_events(
+            user_id=int(user_id),
+            strategy_id=int(strategy_id),
+            limit=limit,
+            event_type=event_type,
+            symbol=symbol,
+        )
+        for rr in rows:
+            ts = rr.get('created_at')
+            if ts is not None:
+                from app.utils.timeutil import to_timezone_iso
+                iso = to_timezone_iso(ts, 'Asia/Shanghai', assume_naive_tz='UTC')
+                rr['created_at'] = iso if iso is not None else str(ts)
+        return jsonify({'code': 1, 'msg': 'success', 'data': rows})
+    except Exception as e:
+        if PgUndefinedTable is not None and isinstance(e, PgUndefinedTable):
+            return jsonify({'code': 1, 'msg': 'success', 'data': []})
+        el = str(e).lower()
+        if 'qd_strategy_execution_events' in el and ('does not exist' in el or 'no such table' in el):
+            return jsonify({'code': 1, 'msg': 'success', 'data': []})
+        logger.error(f"get_strategy_execution_events failed: {str(e)}")
         return jsonify({'code': 0, 'msg': str(e)}), 500

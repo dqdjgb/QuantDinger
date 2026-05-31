@@ -22,13 +22,13 @@
         </div>
       </template>
       <template slot="price" slot-scope="text">
-        ${{ parseFloat(text).toFixed(4) }}
+        {{ formatMoneyValue(text, 4) }}
       </template>
       <template slot="amount" slot-scope="text">
         {{ parseFloat(text).toFixed(4) }}
       </template>
       <template slot="value" slot-scope="text">
-        ${{ parseFloat(text).toFixed(2) }}
+        {{ formatMoneyValue(text, 2) }}
       </template>
       <template slot="profit" slot-scope="text, record">
         <span :class="['ta-pnl', profitToneClass(record)]">
@@ -48,6 +48,7 @@
 <script>
 import { getStrategyTrades } from '@/api/strategy'
 import { formatUserDateTime, formatBrowserLocalDateTime, getUserTimezoneFromStorage } from '@/utils/userTime'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 export default {
   name: 'TradingRecords',
@@ -59,6 +60,10 @@ export default {
     loading: {
       type: Boolean,
       default: false
+    },
+    marketCategory: {
+      type: String,
+      default: 'Crypto'
     },
     isDark: {
       type: Boolean,
@@ -312,9 +317,13 @@ export default {
     // 格式化金额（盈亏）
     formatMoney (value) {
       if (value === null || value === undefined) return '--'
-      // 正数显示+，负数显示-
-      const sign = value >= 0 ? '+' : '-'
-      return `${sign}$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      return formatMarketMoney(value, this.marketCategory, { signed: true })
+    },
+    formatMoneyValue (value, decimals = 2) {
+      return formatMarketMoney(value, this.marketCategory, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals
+      })
     },
     // 格式化盈亏（处理信号模式下没有实盘的情况）
     formatProfit (record) {
@@ -337,7 +346,7 @@ export default {
         if (record && openTypes.includes(record.type)) {
           return '--'
         }
-        return '$0.00'
+        return formatMarketMoney(0, this.marketCategory)
       }
 
       return this.formatMoney(numValue)
@@ -348,9 +357,9 @@ export default {
       const numValue = parseFloat(value)
       if (isNaN(numValue)) return '--'
       if (Math.abs(numValue) < 1e-12) {
-        return '$0.00'
+        return formatMarketMoney(0, this.marketCategory)
       }
-      return `$${numValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`
+      return formatMarketMoney(numValue, this.marketCategory, { minimumFractionDigits: 2, maximumFractionDigits: 6 })
     }
   }
 }

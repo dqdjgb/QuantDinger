@@ -110,11 +110,11 @@
               </div>
               <div v-if="detailNotice.payload.price" class="extra-item">
                 <span class="label">{{ $t('notice.currentPrice') }}:</span>
-                <span class="value">${{ detailNotice.payload.price }}</span>
+                <span class="value">{{ formatPayloadMoney(detailNotice.payload.price, detailNotice.payload) }}</span>
               </div>
               <div v-if="detailNotice.payload.trigger_price" class="extra-item">
                 <span class="label">{{ $t('notice.triggerPrice') }}:</span>
-                <span class="value">${{ detailNotice.payload.trigger_price }}</span>
+                <span class="value">{{ formatPayloadMoney(detailNotice.payload.trigger_price, detailNotice.payload) }}</span>
               </div>
             </template>
 
@@ -156,6 +156,7 @@
 <script>
 import { getStrategyNotifications, getUnreadNotificationCount } from '@/api/strategy'
 import request from '@/utils/request'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 export default {
   name: 'HeaderNotice',
@@ -189,6 +190,10 @@ export default {
     this.stopPolling()
   },
   methods: {
+    formatPayloadMoney (value, payload = {}) {
+      const marketCategory = payload.market_category || payload.marketCategory || payload.market || 'Crypto'
+      return formatMarketMoney(value, marketCategory)
+    },
     startPolling () {
       this.stopPolling()
       // 每30秒轮询一次

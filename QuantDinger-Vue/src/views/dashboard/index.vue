@@ -14,12 +14,11 @@
             <span class="kpi-label">{{ $t('dashboard.totalEquity') }}</span>
           </div>
           <div class="kpi-value">
-            <span class="currency">$</span>
-            <span class="amount">{{ formatNumber(summary.total_equity) }}</span>
+            <span class="amount">{{ formatDashboardMoney(summary.total_equity) }}</span>
           </div>
           <div class="kpi-sub">
             <span :class="summary.total_pnl >= 0 ? 'positive' : 'negative'">
-              {{ summary.total_pnl >= 0 ? '+' : '' }}{{ formatNumber(summary.total_pnl) }}
+              {{ formatDashboardMoney(summary.total_pnl, { signed: true }) }}
             </span>
             <span class="label">{{ $t('dashboard.label.totalPnl') }}</span>
           </div>
@@ -77,7 +76,7 @@
           </div>
           <div class="kpi-sub">
             <span>{{ $t('dashboard.label.avgProfit') }} </span>
-            <span class="positive">${{ formatNumber(performance.avg_win) }}</span>
+            <span class="positive">{{ formatDashboardMoney(performance.avg_win) }}</span>
           </div>
         </div>
       </div>
@@ -96,7 +95,7 @@
             <span class="unit">%</span>
           </div>
           <div class="kpi-sub">
-            <span>${{ formatNumber(performance.max_drawdown) }}</span>
+            <span>{{ formatDashboardMoney(performance.max_drawdown) }}</span>
           </div>
         </div>
       </div>
@@ -194,7 +193,7 @@
               <div class="summary-item">
                 <span class="summary-label">{{ $t('dashboard.ranking.totalProfit') }}</span>
                 <span class="summary-value" :class="currentCalendarMonth.total >= 0 ? 'positive' : 'negative'">
-                  {{ currentCalendarMonth.total >= 0 ? '+' : '' }}${{ formatNumber(currentCalendarMonth.total) }}
+                  {{ formatDashboardMoney(currentCalendarMonth.total, { signed: true }) }}
                 </span>
               </div>
               <div class="summary-item">
@@ -299,7 +298,7 @@
                 <span class="stat">
                   <label>{{ $t('dashboard.ranking.totalProfit') }}</label>
                   <span :class="s.total_pnl >= 0 ? 'positive' : 'negative'">
-                    {{ s.total_pnl >= 0 ? '+' : '' }}${{ formatNumber(s.total_pnl) }}
+                    {{ formatRecordMoney(s.total_pnl, s, { signed: true }) }}
                   </span>
                 </span>
                 <span class="stat">
@@ -362,7 +361,7 @@
           <template slot="unrealized_pnl" slot-scope="text, record">
             <div class="pnl-cell">
               <span :class="text >= 0 ? 'positive' : 'negative'">
-                {{ text >= 0 ? '+' : '' }}${{ formatNumber(text) }}
+                {{ formatRecordMoney(text, record, { signed: true }) }}
               </span>
               <span class="pnl-percent" :class="record.pnl_percent >= 0 ? 'positive' : 'negative'">
                 {{ record.pnl_percent >= 0 ? '+' : '' }}{{ formatNumber(record.pnl_percent) }}%
@@ -498,7 +497,7 @@
           </div>
         </template>
         <template slot="price" slot-scope="text, record">
-          <div v-if="record.filled_price">{{ formatNumber(record.filled_price) }}</div>
+          <div v-if="record.filled_price">{{ formatRecordMoney(record.filled_price, record) }}</div>
           <div v-else class="text-muted">-</div>
         </template>
         <template slot="time_info" slot-scope="text, record">
@@ -517,6 +516,7 @@ import * as echarts from 'echarts'
 import { getDashboardSummary, getPendingOrders } from '@/api/dashboard'
 import { mapState } from 'vuex'
 import { formatUserDateTime } from '@/utils/userTime'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 export default {
   name: 'Dashboard',
@@ -535,6 +535,7 @@ export default {
         total_pnl: 0,
         total_realized_pnl: 0,
         total_unrealized_pnl: 0,
+        market_category: 'Crypto',
         performance: {},
         strategy_stats: [],
         daily_pnl_chart: [],
@@ -573,6 +574,15 @@ export default {
     },
     performance () {
       return this.summary.performance || {}
+    },
+    dashboardMarketCategory () {
+      if (this.summary && this.summary.market_category) return this.summary.market_category
+      const strategy = this.strategyStats.find(s => s && s.market_category)
+      if (strategy) return strategy.market_category
+      const position = (this.summary.current_positions || []).find(p => p && p.market_category)
+      if (position) return position.market_category
+      const trade = (this.summary.recent_trades || []).find(t => t && t.market_category)
+      return trade ? trade.market_category : 'Crypto'
     },
     strategyStats () {
       return this.summary.strategy_stats || []
@@ -651,7 +661,7 @@ export default {
         {
           title: this.$t('dashboard.table.price'),
           dataIndex: 'price',
-          customRender: (text) => this.formatNumber(text),
+          customRender: (text, record) => this.formatRecordMoney(text, record),
           width: 100
         },
         {
@@ -683,7 +693,7 @@ export default {
         {
           title: this.$t('dashboard.table.entryPrice'),
           dataIndex: 'entry_price',
-          customRender: (text) => this.formatNumber(text)
+          customRender: (text, record) => this.formatRecordMoney(text, record)
         },
         {
           title: this.$t('dashboard.table.pnl'),
@@ -988,6 +998,13 @@ export default {
       }
       return map[ex] || 'blue'
     },
+    formatDashboardMoney (value, options = {}) {
+      return formatMarketMoney(value, this.dashboardMarketCategory, options)
+    },
+    formatRecordMoney (value, record, options = {}) {
+      const marketCategory = (record && (record.market_category || record.strategy_market_category)) || this.dashboardMarketCategory
+      return formatMarketMoney(value, marketCategory, options)
+    },
     formatNumber (num, digits = 2) {
       if (num === undefined || num === null) return '0.00'
       return Number(num).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
@@ -1009,12 +1026,11 @@ export default {
         if (record && openTypes.includes(record.type)) {
           return '--'
         }
-        return '$0.00'
+        return this.formatRecordMoney(0, record)
       }
 
       // 正常显示
-      const sign = numValue >= 0 ? '+' : ''
-      return `${sign}$${this.formatNumber(numValue)}`
+      return this.formatRecordMoney(numValue, record, { signed: true })
     },
     formatCompactNumber (num) {
       if (num === undefined || num === null) return '0'
@@ -1128,13 +1144,13 @@ export default {
           textStyle: { color: isDark ? '#f3f4f6' : '#1f2937' },
           formatter: (p) => {
             const sv = (p && p.data && typeof p.data.signedValue === 'number') ? p.data.signedValue : 0
-            const svStr = (sv >= 0 ? '+' : '') + this.formatNumber(sv, 2)
+            const svStr = this.formatDashboardMoney(sv, { signed: true })
             const svColor = sv >= 0 ? '#10b981' : '#ef4444'
             return `
               <div style="padding: 4px 0;">
                 <div style="font-weight:600;margin-bottom:6px;">${p.name}</div>
                 <div style="color:${textColor}">占比 <span style="font-weight:600;color:${isDark ? '#f3f4f6' : '#1f2937'}">${p.percent}%</span></div>
-                <div style="color:${textColor}">PNL <span style="font-weight:600;color:${svColor}">$${svStr}</span></div>
+                <div style="color:${textColor}">PNL <span style="font-weight:600;color:${svColor}">${svStr}</span></div>
               </div>
             `
           }
@@ -1233,7 +1249,7 @@ export default {
             const p = Array.isArray(params) ? params[0] : null
             const date = p ? p.axisValue : ''
             const v = p ? Number(p.data || 0) : 0
-            const vStr = this.formatNumber(Math.abs(v), 2)
+            const vStr = this.formatDashboardMoney(-Math.abs(v))
             const pctOfMax = maxDdValue !== 0 ? Math.abs((v / maxDdValue) * 100).toFixed(0) : 0
             return `
               <div style="min-width: 140px;">
@@ -1243,7 +1259,7 @@ export default {
                     <span style="width:10px;height:10px;border-radius:2px;background:linear-gradient(180deg,#f87171,#dc2626);"></span>
                     <span style="color:${textColor}">${this.$t('dashboard.drawdown') || 'Drawdown'}</span>
                   </span>
-                  <span style="font-weight:700;color:#ef4444;font-family:monospace;">-$${vStr}</span>
+                  <span style="font-weight:700;color:#ef4444;font-family:monospace;">${vStr}</span>
                 </div>
                 <div style="background:${isDark ? 'rgba(63,63,70,0.5)' : 'rgba(228,228,231,0.5)'};height:6px;border-radius:3px;overflow:hidden;">
                   <div style="width:${pctOfMax}%;height:100%;background:linear-gradient(90deg,#f87171,#ef4444);border-radius:3px;"></div>
@@ -1272,8 +1288,7 @@ export default {
             color: textColor,
             fontSize: 10,
             formatter: (v) => {
-              if (Math.abs(v) >= 1000) return '-$' + (Math.abs(v) / 1000).toFixed(1) + 'k'
-              return v === 0 ? '0' : '-$' + Math.abs(v)
+              return v === 0 ? '0' : this.formatDashboardMoney(-Math.abs(v), { maximumFractionDigits: 0 })
             }
           },
           splitLine: { lineStyle: { color: gridColor, type: [4, 4] } },
@@ -1373,12 +1388,12 @@ export default {
               if (p.seriesName === profitLabel) profit = p.data || 0
             }
             const profitColor = profit >= 0 ? '#10b981' : '#ef4444'
-            const profitStr = (profit >= 0 ? '+' : '') + this.formatNumber(profit, 2)
+            const profitStr = this.formatDashboardMoney(profit, { signed: true })
             return `
               <div style="padding: 4px 0;">
                 <div style="font-weight:600;margin-bottom:6px;">${hour}</div>
                 <div style="color:${textColor}">${tradeCountLabel} <span style="font-weight:600;color:${isDark ? '#f3f4f6' : '#1f2937'}">${count} ${unitLabel}</span></div>
-                <div style="color:${textColor}">${profitLabel} <span style="font-weight:600;color:${profitColor}">$${profitStr}</span></div>
+                <div style="color:${textColor}">${profitLabel} <span style="font-weight:600;color:${profitColor}">${profitStr}</span></div>
               </div>
             `
           }

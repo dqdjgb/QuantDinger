@@ -309,12 +309,14 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
     existing_strategy_ids: set = set()
     sid_to_name: Dict[int, str] = {}
     sid_to_capital: Dict[int, float] = {}
+    sid_to_market: Dict[int, str] = {}
     for s in strategies:
         sid = _safe_int(s.get("id"), 0)
         if sid > 0:
             existing_strategy_ids.add(sid)
             sid_to_name[sid] = str(s.get("strategy_name") or f"Strategy_{sid}")
             sid_to_capital[sid] = _safe_float(s.get("initial_capital"), 0.0)
+            sid_to_market[sid] = str(s.get("market_category") or "Crypto").strip() or "Crypto"
 
     # Group trades by strategy (only for existing strategies)
     sid_to_trades: Dict[int, List[Dict[str, Any]]] = {}
@@ -343,6 +345,7 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
             "total_pnl": round(total_pnl, 2),
             "roi": round(roi, 2),
             "max_drawdown": stats["max_drawdown"],
+            "market_category": sid_to_market.get(sid, "Crypto"),
         })
 
     # Sort by total PnL descending
@@ -364,7 +367,7 @@ def summary():
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT id, strategy_name, strategy_type, status, initial_capital, trading_config, strategy_mode
+                SELECT id, strategy_name, strategy_type, status, initial_capital, trading_config, strategy_mode, market_category
                 FROM qd_strategies_trading
                 WHERE user_id = ?
                 """,
@@ -399,7 +402,7 @@ def summary():
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT p.*, s.strategy_name, s.initial_capital, s.leverage, s.market_type
+                SELECT p.*, s.strategy_name, s.initial_capital, s.leverage, s.market_type, s.market_category
                 FROM qd_strategy_positions p
                 INNER JOIN qd_strategies_trading s ON s.id = p.strategy_id
                 WHERE p.user_id = ?
@@ -433,6 +436,7 @@ def summary():
                 {
                     **r,
                     "strategy_name": r.get("strategy_name") or "",
+                    "market_category": str(r.get("market_category") or "Crypto").strip() or "Crypto",
                     "unrealized_pnl": float(pnl),
                     "pnl_percent": float(pct),
                 }
@@ -466,7 +470,7 @@ def summary():
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT t.*, s.strategy_name
+                SELECT t.*, s.strategy_name, s.market_category
                 FROM qd_strategy_trades t
                 INNER JOIN qd_strategies_trading s ON s.id = t.strategy_id
                 WHERE t.user_id = ?
@@ -491,6 +495,26 @@ def summary():
                     ca = ca.replace(tzinfo=_tz.utc)
                 trade['created_at'] = int(ca.timestamp())
             recent_trades.append(trade)
+
+        def _dashboard_market_category() -> str:
+            cats: List[str] = []
+            for row in strategies:
+                cat = str(row.get("market_category") or "").strip()
+                if cat:
+                    cats.append(cat)
+            for row in current_positions:
+                cat = str(row.get("market_category") or "").strip()
+                if cat:
+                    cats.append(cat)
+            for row in recent_trades:
+                cat = str(row.get("market_category") or "").strip()
+                if cat:
+                    cats.append(cat)
+            unique = []
+            for cat in cats:
+                if cat not in unique:
+                    unique.append(cat)
+            return unique[0] if len(unique) == 1 else "Crypto"
 
         # Total equity/pnl (best-effort) - calculate before performance stats for drawdown calculation
         total_initial_capital = 0.0
@@ -616,6 +640,7 @@ def summary():
                     "total_pnl": round(total_pnl, 2),
                     "total_realized_pnl": round(total_realized_pnl, 2),
                     "total_unrealized_pnl": round(total_unrealized_pnl, 2),
+                    "market_category": _dashboard_market_category(),
                     # Performance KPIs
                     "performance": perf_stats,
                     # Strategy-level stats
@@ -698,7 +723,8 @@ def pending_orders():
             if not notify_channels:
                 notify_channels = ["browser"]
             market_type = (r.get("market_type") or r.get("strategy_market_type") or ex_cfg.get("market_type") or ex_cfg.get("marketType") or "").strip().lower()
-            market_category = str(r.get("strategy_market_category") or "").strip().lower()
+            raw_market_category = str(r.get("strategy_market_category") or "").strip()
+            market_category = raw_market_category.lower()
             execution_mode = str(r.get("strategy_execution_mode") or r.get("execution_mode") or "").strip().lower()
 
             # If non-crypto markets are "signal-only", show SIGNAL instead of blank exchange.
@@ -719,6 +745,7 @@ def pending_orders():
                     "exchange_display": exchange_display,
                     "notify_channels": notify_channels,
                     "market_type": market_type or (r.get("market_type") or ""),
+                    "market_category": raw_market_category or "Crypto",
                     # Format datetime fields for JSON serialization
                     "created_at": _format_datetime(r.get("created_at")),
                     "updated_at": _format_datetime(r.get("updated_at")),

@@ -69,7 +69,7 @@ class CNStockDataSource(BaseDataSource):
     def _fetch_kline_source(
         self,
         source: str,
-        code: str,
+        diag_code: str,
         diag_timeframe: str,
         diag_limit: int,
         fetcher: Any,
@@ -77,10 +77,10 @@ class CNStockDataSource(BaseDataSource):
     ) -> List[Dict[str, Any]]:
         try:
             rows = fetcher(**kwargs) or []
-            self._record_kline_source(source, code, diag_timeframe, diag_limit, rows=rows)
+            self._record_kline_source(source, diag_code, diag_timeframe, diag_limit, rows=rows)
             return rows
         except Exception as e:
-            self._record_kline_source(source, code, diag_timeframe, diag_limit, rows=[], error=e)
+            self._record_kline_source(source, diag_code, diag_timeframe, diag_limit, rows=[], error=e)
             return []
 
     def get_last_kline_diagnostics(self) -> List[Dict[str, Any]]:

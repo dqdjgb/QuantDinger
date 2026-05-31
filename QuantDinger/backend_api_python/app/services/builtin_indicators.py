@@ -359,20 +359,23 @@ def seed_builtin_indicators_for_new_user(db: Any, user_id: int) -> int:
     now = int(time.time())
     cur = db.cursor()
     try:
+        specs = _builtin_specs()
+        spec_names = [spec["name"] for spec in specs]
+        placeholders = ",".join(["?"] * len(spec_names))
         cur.execute(
-            """
-            SELECT 1 AS x
+            f"""
+            SELECT name
             FROM qd_indicator_codes
-            WHERE user_id = ? AND name = ?
-            LIMIT 1
+            WHERE user_id = ? AND name IN ({placeholders})
             """,
-            (user_id, _BUILTIN_PACK_ANCHOR_NAME),
+            (user_id, *spec_names),
         )
-        if cur.fetchone():
-            return 0
+        existing_names = {str(row["name"] if hasattr(row, "keys") else row[0]) for row in (cur.fetchall() or [])}
 
         inserted = 0
-        for spec in _builtin_specs():
+        for spec in specs:
+            if spec["name"] in existing_names:
+                continue
             cur.execute(
                 """
                 INSERT INTO qd_indicator_codes

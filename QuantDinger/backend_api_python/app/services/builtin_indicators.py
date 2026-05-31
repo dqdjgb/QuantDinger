@@ -167,6 +167,150 @@ output = {
 '''
 
 
+_MACD_CODE = r'''# ============================================================
+# [Sample] MACD Trend-Following -- classic momentum confirmation
+# ------------------------------------------------------------
+# Idea: MACD captures trend momentum by comparing fast and slow EMAs.
+# A bullish cross opens a long signal, and a bearish cross closes or
+# reverses depending on the backtest panel's trade direction settings.
+#
+# Design notes:
+#   1) Signals are edge-triggered on MACD / signal-line crosses.
+#   2) The histogram is plotted for momentum inspection.
+#   3) All periods are declared as @param values for Smart Tuner sweeps.
+# ============================================================
+
+my_indicator_name = "[Sample] MACD Trend-Following"
+my_indicator_description = (
+    "Classic MACD trend-following strategy: buy when MACD crosses above "
+    "the signal line, sell when it crosses below. Best used to confirm "
+    "directional momentum after a trend has started."
+)
+
+# ===== Default risk controls (overridable in the backtest panel) =====
+# @strategy stopLossPct 0.03
+# @strategy takeProfitPct 0.08
+# @strategy entryPct 0.5
+# @strategy trailingEnabled true
+# @strategy trailingStopPct 0.025
+# @strategy trailingActivationPct 0.04
+# @strategy tradeDirection both
+
+# ===== Tunable params =====
+# @param fast_period int 12 Fast EMA period range=8:16:1
+# @param slow_period int 26 Slow EMA period range=20:34:2
+# @param signal_period int 9 MACD signal EMA period range=5:13:1
+
+fast_period = int(params.get('fast_period', 12))
+slow_period = int(params.get('slow_period', 26))
+signal_period = int(params.get('signal_period', 9))
+
+df = df.copy()
+close = df['close']
+
+fast_ema = close.ewm(span=fast_period, adjust=False, min_periods=fast_period).mean()
+slow_ema = close.ewm(span=slow_period, adjust=False, min_periods=slow_period).mean()
+macd = fast_ema - slow_ema
+signal = macd.ewm(span=signal_period, adjust=False, min_periods=signal_period).mean()
+histogram = macd - signal
+
+raw_buy = (macd > signal) & (macd.shift(1) <= signal.shift(1))
+raw_sell = (macd < signal) & (macd.shift(1) >= signal.shift(1))
+
+df['buy'] = raw_buy.fillna(False).astype(bool)
+df['sell'] = raw_sell.fillna(False).astype(bool)
+
+n = len(df)
+buy_marks = [df['low'].iloc[i] * 0.995 if bool(df['buy'].iloc[i]) else None
+             for i in range(n)]
+sell_marks = [df['high'].iloc[i] * 1.005 if bool(df['sell'].iloc[i]) else None
+              for i in range(n)]
+
+output = {
+    'name': my_indicator_name,
+    'plots': [
+        {'name': 'MACD', 'data': macd.fillna(0).tolist(), 'color': '#1677FF', 'overlay': False},
+        {'name': 'Signal', 'data': signal.fillna(0).tolist(), 'color': '#FA8C16', 'overlay': False},
+        {'name': 'Histogram', 'data': histogram.fillna(0).tolist(), 'color': '#52C41A', 'overlay': False},
+    ],
+    'signals': [
+        {'type': 'buy', 'text': 'B', 'data': buy_marks, 'color': '#00E676'},
+        {'type': 'sell', 'text': 'S', 'data': sell_marks, 'color': '#FF5252'},
+    ],
+}
+'''
+
+
+_BOLLINGER_CODE = r'''# ============================================================
+# [Sample] Bollinger Mean Reversion -- classic volatility bands
+# ------------------------------------------------------------
+# Idea: Bollinger Bands estimate a rolling fair-value zone. This sample
+# buys when price recovers back above the lower band after an oversold
+# excursion, and sells when price fades back below the upper band after
+# an overbought excursion.
+#
+# Design notes:
+#   1) Signals require a re-entry into the bands, not just touching them.
+#   2) The middle band is a simple moving average.
+#   3) This is a mean-reversion template; it can struggle in strong trends.
+# ============================================================
+
+my_indicator_name = "[Sample] Bollinger Mean Reversion"
+my_indicator_description = (
+    "Classic Bollinger Band mean-reversion strategy: buy when price moves "
+    "back above the lower band after an oversold move, sell when price "
+    "moves back below the upper band after an overbought move."
+)
+
+# ===== Default risk controls (overridable in the backtest panel) =====
+# @strategy stopLossPct 0.025
+# @strategy takeProfitPct 0.05
+# @strategy entryPct 0.35
+# @strategy trailingEnabled false
+# @strategy tradeDirection both
+
+# ===== Tunable params =====
+# @param window int 20 Rolling mean and standard deviation window range=14:40:2
+# @param num_std float 2.0 Band width in standard deviations range=1.5:3.0:0.25
+
+window = int(params.get('window', 20))
+num_std = float(params.get('num_std', 2.0))
+
+df = df.copy()
+close = df['close']
+
+middle = close.rolling(window=window, min_periods=window).mean()
+std = close.rolling(window=window, min_periods=window).std()
+upper = middle + num_std * std
+lower = middle - num_std * std
+
+raw_buy = (close > lower) & (close.shift(1) <= lower.shift(1))
+raw_sell = (close < upper) & (close.shift(1) >= upper.shift(1))
+
+df['buy'] = raw_buy.fillna(False).astype(bool)
+df['sell'] = raw_sell.fillna(False).astype(bool)
+
+n = len(df)
+buy_marks = [df['low'].iloc[i] * 0.995 if bool(df['buy'].iloc[i]) else None
+             for i in range(n)]
+sell_marks = [df['high'].iloc[i] * 1.005 if bool(df['sell'].iloc[i]) else None
+              for i in range(n)]
+
+output = {
+    'name': my_indicator_name,
+    'plots': [
+        {'name': 'Upper Band', 'data': upper.fillna(0).tolist(), 'color': '#722ED1', 'overlay': True},
+        {'name': 'Middle Band', 'data': middle.fillna(0).tolist(), 'color': '#8C8C8C', 'overlay': True},
+        {'name': 'Lower Band', 'data': lower.fillna(0).tolist(), 'color': '#13C2C2', 'overlay': True},
+    ],
+    'signals': [
+        {'type': 'buy', 'text': 'B', 'data': buy_marks, 'color': '#00E676'},
+        {'type': 'sell', 'text': 'S', 'data': sell_marks, 'color': '#FF5252'},
+    ],
+}
+'''
+
+
 def _builtin_specs() -> List[Dict[str, str]]:
     """内置指标：name / description / code（与指标 IDE、回测引擎约定一致）。
 
@@ -183,6 +327,24 @@ def _builtin_specs() -> List[Dict[str, str]]:
                 "Smart Tuner can sweep them out-of-the-box."
             ),
             "code": _SUPERTREND_CODE,
+        },
+        {
+            "name": "[Sample] MACD Trend-Following",
+            "description": (
+                "Classic MACD trend-following strategy: buys on MACD signal-line "
+                "bullish crosses and sells on bearish crosses. Useful as a simple "
+                "momentum-confirmation template with tunable EMA periods."
+            ),
+            "code": _MACD_CODE,
+        },
+        {
+            "name": "[Sample] Bollinger Mean Reversion",
+            "description": (
+                "Classic Bollinger Band mean-reversion strategy: buys after price "
+                "recovers from the lower band and sells after it fades from the "
+                "upper band. Useful for range-bound market research."
+            ),
+            "code": _BOLLINGER_CODE,
         },
     ]
 

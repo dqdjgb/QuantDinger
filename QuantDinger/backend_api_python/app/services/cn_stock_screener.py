@@ -459,11 +459,11 @@ class CNStockScreenerService:
                     SELECT s.symbol, COUNT(l.id) AS error_count
                     FROM qd_strategies_trading s
                     LEFT JOIN qd_strategy_logs l
-                      ON l.strategy_id = s.id
+                     ON l.strategy_id = s.id
                      AND l.timestamp >= ?
                      AND (LOWER(COALESCE(l.level, '')) IN ('error', 'warning')
-                          OR LOWER(COALESCE(l.message, '')) LIKE '%error%'
-                          OR LOWER(COALESCE(l.message, '')) LIKE '%failed%')
+                          OR LOWER(COALESCE(l.message, '')) LIKE '%%error%%'
+                          OR LOWER(COALESCE(l.message, '')) LIKE '%%failed%%')
                     WHERE s.user_id = ?
                       AND s.market_category = 'CNStock'
                       AND s.execution_mode = 'paper'

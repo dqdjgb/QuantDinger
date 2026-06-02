@@ -1276,9 +1276,20 @@ class TradingExecutor:
                 tick_interval_sec = 10
             if tick_interval_sec < 1:
                 tick_interval_sec = 1
+            try:
+                cnstock_window_buffer_min = int(os.getenv("CNSTOCK_STRATEGY_TRADING_WINDOW_BUFFER_MINUTES", "10"))
+            except Exception:
+                cnstock_window_buffer_min = 10
+            try:
+                cnstock_closed_sleep_sec = int(os.getenv("CNSTOCK_STRATEGY_CLOSED_SLEEP_SEC", "60"))
+            except Exception:
+                cnstock_closed_sleep_sec = 60
+            if cnstock_closed_sleep_sec < 1:
+                cnstock_closed_sleep_sec = 60
 
             last_tick_time = 0.0
             last_kline_update_time = time.time()
+            last_cnstock_window_open = None
             
             # 计算K线周期（秒）
             from app.data_sources.base import TIMEFRAME_SECONDS
@@ -1293,6 +1304,34 @@ class TradingExecutor:
                         break
                     
                     current_time = time.time()
+
+                    if self._should_skip_cnstock_strategy_tick(
+                        market_category=market_category,
+                        buffer_minutes=cnstock_window_buffer_min,
+                    ):
+                        if last_cnstock_window_open is not False:
+                            msg = (
+                                f"CNStock trading window closed; pausing tick work for {symbol} "
+                                f"(buffer={cnstock_window_buffer_min}m)"
+                            )
+                            logger.info(f"Strategy {strategy_id} {msg}")
+                            try:
+                                append_strategy_log(strategy_id, "info", msg)
+                            except Exception:
+                                pass
+                            last_cnstock_window_open = False
+                        time.sleep(min(max(cnstock_closed_sleep_sec, 1), 300))
+                        continue
+
+                    if last_cnstock_window_open is False:
+                        msg = f"CNStock trading window open; resuming tick work for {symbol}"
+                        logger.info(f"Strategy {strategy_id} {msg}")
+                        try:
+                            append_strategy_log(strategy_id, "info", msg)
+                        except Exception:
+                            pass
+                    if (market_category or "").strip() == "CNStock":
+                        last_cnstock_window_open = True
 
                     # Sleep until next tick to avoid CPU spin.
                     if last_tick_time > 0:
@@ -2030,6 +2069,12 @@ class TradingExecutor:
             return False
         tf = (timeframe or "").strip()
         return tf in ("1m", "3m", "5m", "15m", "30m", "1H", "4H", "1h", "4h")
+
+    @staticmethod
+    def _should_skip_cnstock_strategy_tick(market_category: str, buffer_minutes: int = 10) -> bool:
+        if (market_category or "").strip() != "CNStock":
+            return False
+        return not cn_paper.is_trading_window(buffer_minutes=buffer_minutes)
 
     @staticmethod
     def _cnstock_initial_kline_attempts(market_category: str, timeframe: str) -> int:

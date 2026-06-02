@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import math
+import os
+import time as time_module
 from dataclasses import dataclass
-from datetime import datetime, time, timezone, timedelta
-from typing import Any, Dict
+from datetime import date, datetime, time, timezone, timedelta
+from typing import Any, Dict, Set
+
+logger = logging.getLogger(__name__)
 
 
 LOT_SIZE = 100
@@ -16,6 +21,7 @@ TRADING_SESSIONS = (
     (time(9, 30), time(11, 30)),
     (time(13, 0), time(15, 0)),
 )
+_TRADE_DATES_CACHE: Dict[str, Any] = {"ts": 0.0, "dates": set()}
 
 
 @dataclass(frozen=True)
@@ -73,10 +79,73 @@ def _to_shanghai_datetime(value: datetime | None = None) -> datetime:
     return dt.astimezone(SHANGHAI_TZ)
 
 
+def _normalize_trade_date(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    return raw[:10].replace("/", "-")
+
+
+def _fetch_trade_dates_from_akshare() -> Set[str]:
+    import akshare as ak
+
+    df = ak.tool_trade_date_hist_sina()
+    if df is None or "trade_date" not in df:
+        return set()
+    return {d for d in (_normalize_trade_date(v) for v in df["trade_date"].tolist()) if d}
+
+
+def _trade_calendar_cache_ttl_sec() -> int:
+    try:
+        return max(3600, int(os.getenv("CNSTOCK_TRADE_CALENDAR_CACHE_TTL_SEC", "43200")))
+    except Exception:
+        return 43200
+
+
+def _get_trade_dates() -> Set[str]:
+    now = time_module.time()
+    cached = _TRADE_DATES_CACHE.get("dates")
+    if cached and now - float(_TRADE_DATES_CACHE.get("ts") or 0.0) < _trade_calendar_cache_ttl_sec():
+        return set(cached)
+
+    try:
+        fresh = _fetch_trade_dates_from_akshare()
+        if fresh:
+            _TRADE_DATES_CACHE["dates"] = fresh
+            _TRADE_DATES_CACHE["ts"] = now
+            return set(fresh)
+        raise RuntimeError("empty A-share trade calendar")
+    except Exception as exc:
+        if cached:
+            logger.warning("Using stale CNStock trade calendar after refresh failure: %s", exc)
+            return set(cached)
+        if str(os.getenv("CNSTOCK_TRADE_CALENDAR_FALLBACK_WEEKDAY", "")).strip().lower() in {"1", "true", "yes", "on"}:
+            logger.warning("CNStock trade calendar unavailable; falling back to weekday rule: %s", exc)
+            return set()
+        logger.error("CNStock trade calendar unavailable; fail-closed for trading-day checks: %s", exc)
+        return set()
+
+
+def is_trading_day(value: datetime | date | None = None) -> bool:
+    dt = _to_shanghai_datetime(value if isinstance(value, datetime) else None)
+    day = value if isinstance(value, date) and not isinstance(value, datetime) else dt.date()
+    key = day.isoformat()
+    trade_dates = _get_trade_dates()
+    if trade_dates:
+        return key in trade_dates
+    if str(os.getenv("CNSTOCK_TRADE_CALENDAR_FALLBACK_WEEKDAY", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return day.weekday() < 5
+    return False
+
+
 def is_trading_time(value: datetime | None = None) -> bool:
     """Return True during mainland China A-share continuous trading sessions."""
     dt = _to_shanghai_datetime(value)
-    if dt.weekday() >= 5:
+    if not is_trading_day(dt):
         return False
     t = dt.time()
     return any(start <= t <= end for start, end in TRADING_SESSIONS)

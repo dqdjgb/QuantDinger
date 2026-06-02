@@ -1150,6 +1150,26 @@ class TradingExecutor:
             # 初始化阶段：获取历史K线并计算指标
             # ============================================
             # logger.info(f"策略 {strategy_id} 初始化：获取历史K线数据...")
+            try:
+                cnstock_window_buffer_min = int(os.getenv("CNSTOCK_STRATEGY_TRADING_WINDOW_BUFFER_MINUTES", "10"))
+            except Exception:
+                cnstock_window_buffer_min = 10
+            try:
+                cnstock_closed_sleep_sec = int(os.getenv("CNSTOCK_STRATEGY_CLOSED_SLEEP_SEC", "60"))
+            except Exception:
+                cnstock_closed_sleep_sec = 60
+            if cnstock_closed_sleep_sec < 1:
+                cnstock_closed_sleep_sec = 60
+            if not self._wait_for_cnstock_strategy_window(
+                strategy_id=strategy_id,
+                symbol=symbol,
+                market_category=market_category,
+                buffer_minutes=cnstock_window_buffer_min,
+                sleep_seconds=cnstock_closed_sleep_sec,
+            ):
+                exit_reason = "strategy stopped while waiting for CNStock trading window"
+                logger.info(f"Strategy {strategy_id} {exit_reason}")
+                return
             history_limit = int(os.getenv('K_LINE_HISTORY_GET_NUMBER', 500))
             klines, initial_kline_attempts, initial_kline_diagnostics = self._fetch_initial_kline_with_retries(
                 strategy_id, symbol, timeframe, limit=history_limit, market_category=market_category,
@@ -1276,17 +1296,6 @@ class TradingExecutor:
                 tick_interval_sec = 10
             if tick_interval_sec < 1:
                 tick_interval_sec = 1
-            try:
-                cnstock_window_buffer_min = int(os.getenv("CNSTOCK_STRATEGY_TRADING_WINDOW_BUFFER_MINUTES", "10"))
-            except Exception:
-                cnstock_window_buffer_min = 10
-            try:
-                cnstock_closed_sleep_sec = int(os.getenv("CNSTOCK_STRATEGY_CLOSED_SLEEP_SEC", "60"))
-            except Exception:
-                cnstock_closed_sleep_sec = 60
-            if cnstock_closed_sleep_sec < 1:
-                cnstock_closed_sleep_sec = 60
-
             last_tick_time = 0.0
             last_kline_update_time = time.time()
             last_cnstock_window_open = None
@@ -2075,6 +2084,60 @@ class TradingExecutor:
         if (market_category or "").strip() != "CNStock":
             return False
         return not cn_paper.is_trading_window(buffer_minutes=buffer_minutes)
+
+    def _is_strategy_db_marked_running(self, strategy_id: int) -> bool:
+        try:
+            with get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute(
+                    "SELECT status FROM qd_strategies_trading WHERE id = %s",
+                    (strategy_id,),
+                )
+                row = cursor.fetchone()
+                cursor.close()
+            return bool(row and row.get("status") == "running")
+        except Exception as e:
+            logger.warning(f"Strategy {strategy_id} DB running-state check failed: {e}")
+            return True
+
+    def _wait_for_cnstock_strategy_window(
+        self,
+        *,
+        strategy_id: int,
+        symbol: str,
+        market_category: str,
+        buffer_minutes: int,
+        sleep_seconds: int,
+    ) -> bool:
+        if (market_category or "").strip() != "CNStock":
+            return True
+
+        logged_wait = False
+        while self._should_skip_cnstock_strategy_tick(market_category, buffer_minutes=buffer_minutes):
+            if not logged_wait:
+                msg = (
+                    f"CNStock trading window closed; delaying initialization for {symbol} "
+                    f"(buffer={buffer_minutes}m)"
+                )
+                logger.info(f"Strategy {strategy_id} {msg}")
+                try:
+                    append_strategy_log(strategy_id, "info", msg)
+                except Exception:
+                    pass
+                logged_wait = True
+
+            time.sleep(min(max(int(sleep_seconds or 60), 1), 300))
+            if not self._is_strategy_db_marked_running(strategy_id):
+                return False
+
+        if logged_wait:
+            msg = f"CNStock trading window open; initializing strategy for {symbol}"
+            logger.info(f"Strategy {strategy_id} {msg}")
+            try:
+                append_strategy_log(strategy_id, "info", msg)
+            except Exception:
+                pass
+        return True
 
     @staticmethod
     def _cnstock_initial_kline_attempts(market_category: str, timeframe: str) -> int:

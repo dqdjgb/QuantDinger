@@ -185,6 +185,28 @@ def test_cnstock_strategy_tick_skips_outside_trading_window(monkeypatch):
     assert TradingExecutor._should_skip_cnstock_strategy_tick("Crypto", buffer_minutes=10) is False
 
 
+def test_cnstock_strategy_waits_for_trading_window_before_initializing(monkeypatch):
+    executor = object.__new__(TradingExecutor)
+    states = iter([False, True])
+    logs = []
+    sleeps = []
+
+    monkeypatch.setattr(trading_executor_module.cn_paper, "is_trading_window", lambda buffer_minutes=10: next(states))
+    monkeypatch.setattr(trading_executor_module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(executor, "_is_strategy_db_marked_running", lambda strategy_id: True)
+    monkeypatch.setattr(trading_executor_module, "append_strategy_log", lambda *args: logs.append(args))
+
+    assert executor._wait_for_cnstock_strategy_window(
+        strategy_id=1,
+        symbol="002600",
+        market_category="CNStock",
+        buffer_minutes=10,
+        sleep_seconds=60,
+    ) is True
+    assert sleeps == [60]
+    assert any("delaying initialization" in args[2] for args in logs)
+
+
 def test_entry_ai_filter_uses_strategy_market_category(monkeypatch):
     executor = object.__new__(TradingExecutor)
     calls = []

@@ -107,7 +107,7 @@ class UserService:
                 cur.execute(
                     """
                     SELECT id, username, email, nickname, avatar, status, role,
-                           credits, vip_expires_at, timezone,
+                           credits, vip_expires_at, timezone, strategy_total_capital,
                            COALESCE(
                                qd_users.last_login_at,
                                (
@@ -416,7 +416,7 @@ class UserService:
             user_id: User ID
             data: Fields to update (email, nickname, avatar, role, status)
         """
-        allowed_fields = ['email', 'nickname', 'avatar', 'role', 'status', 'timezone']
+        allowed_fields = ['email', 'nickname', 'avatar', 'role', 'status', 'timezone', 'strategy_total_capital']
         updates = []
         values = []
         
@@ -432,6 +432,11 @@ class UserService:
                     updates.append('timezone = ?')
                     values.append(s)
                     continue
+                if field == 'strategy_total_capital':
+                    try:
+                        value = max(0.0, float(value or 0))
+                    except Exception:
+                        continue
                 updates.append(f"{field} = ?")
                 values.append(value)
         

@@ -500,6 +500,16 @@ def update_profile():
         for field in ['nickname', 'avatar']:
             if field in data:
                 allowed[field] = data[field]
+
+        if 'strategy_total_capital' in data:
+            try:
+                allowed['strategy_total_capital'] = max(0.0, float(data.get('strategy_total_capital') or 0))
+            except Exception:
+                return jsonify({
+                    'code': 0,
+                    'msg': 'Invalid strategy_total_capital',
+                    'data': None
+                }), 400
         
         if 'timezone' in data:
             tz = (data.get('timezone') or '').strip()

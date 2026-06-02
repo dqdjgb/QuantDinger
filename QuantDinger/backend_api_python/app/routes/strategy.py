@@ -311,8 +311,10 @@ def list_strategies():
     """
     try:
         user_id = g.user_id
-        items = get_strategy_service().list_strategies(user_id=user_id)
-        return jsonify({'code': 1, 'msg': 'success', 'data': {'strategies': items}})
+        svc = get_strategy_service()
+        items = svc.list_strategies(user_id=user_id)
+        capital_pool = svc.get_capital_pool_summary(user_id=user_id)
+        return jsonify({'code': 1, 'msg': 'success', 'data': {'strategies': items, 'capital_pool': capital_pool}})
     except Exception as e:
         logger.error(f"list_strategies failed: {str(e)}")
         logger.error(traceback.format_exc())

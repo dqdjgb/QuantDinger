@@ -182,14 +182,18 @@
             />
           </a-form-model-item>
 
-          <a-form-model-item :label="capitalLabel" prop="initialCapital">
+          <a-form-model-item label="策略资金占比" prop="capitalAllocationPct">
             <a-input-number
-              v-model="baseForm.initialCapital"
-              :min="10"
-              :step="100"
+              v-model="baseForm.capitalAllocationPct"
+              :min="0.01"
+              :max="100"
+              :step="1"
+              :precision="2"
+              :formatter="v => `${v}%`"
+              :parser="v => String(v || '').replace('%', '')"
               style="width: 100%"
-              placeholder="USDT"
             />
+            <div class="form-hint">分配资金：${{ baseForm.initialCapital }}</div>
             <div v-if="botType === 'martingale'" class="form-hint">{{ martingaleBudgetHint }}</div>
           </a-form-model-item>
 
@@ -436,6 +440,7 @@ import { mapGetters } from 'vuex'
 import { createStrategy, updateStrategy } from '@/api/strategy'
 import { listExchangeCredentials } from '@/api/credentials'
 import { getWatchlist, addWatchlist, searchSymbols } from '@/api/market'
+import { getProfile } from '@/api/user'
 import { generateBotScript } from './botScriptTemplates'
 import GridConfig from './configs/GridConfig.vue'
 import MartingaleConfig from './configs/MartingaleConfig.vue'
@@ -500,6 +505,7 @@ export default {
         timeframe: '1h',
         marketType: 'swap',
         leverage: 5,
+        capitalAllocationPct: 10,
         initialCapital: null
       },
       baseRules: {
@@ -507,8 +513,9 @@ export default {
         marketCategory: [{ required: true, message: this.$t('trading-bot.wizard.marketCategory'), trigger: 'change' }],
         credentialId: [{ required: true, message: this.$t('trading-bot.wizard.credentialReq'), trigger: 'change' }],
         symbol: [{ required: true, message: this.$t('trading-bot.wizard.symbolReq'), trigger: 'change' }],
-        initialCapital: [{ required: true, type: 'number', min: 10, message: this.$t('trading-bot.wizard.capitalReq'), trigger: 'change' }]
+        capitalAllocationPct: [{ required: true, type: 'number', min: 0.01, max: 100, message: this.$t('trading-bot.wizard.capitalReq'), trigger: 'change' }]
       },
+      strategyTotalCapital: 0,
       strategyParams: {},
       riskForm: {
         stopLossPct: 10,
@@ -714,6 +721,11 @@ export default {
         ? (this.isZhLocale ? '总投入金额' : 'Total Budget')
         : this.$t('trading-bot.wizard.initialCapital')
     },
+    allocatedCapital () {
+      const total = Number(this.strategyTotalCapital || 0)
+      const pct = Number(this.baseForm.capitalAllocationPct || 0) / 100
+      return Math.max(0, Math.round(total * pct * 100) / 100)
+    },
     martingaleBudgetHint () {
       return this.isZhLocale
         ? '这里表示这一轮马丁允许投入的总预算，首单金额会自动反推。'
@@ -782,6 +794,12 @@ export default {
     }
   },
   watch: {
+    'baseForm.capitalAllocationPct' () {
+      this.syncAllocatedCapital()
+    },
+    strategyTotalCapital () {
+      this.syncAllocatedCapital()
+    },
     'baseForm.initialCapital' (val) {
       if (!val || val <= 0) return
       if (this.botType !== 'martingale') {
@@ -820,6 +838,7 @@ export default {
     }
   },
   created () {
+    this.loadCapitalPool()
     this.loadCredentials()
     if (this.editBot) {
       this.applyEditBot()
@@ -835,6 +854,21 @@ export default {
     }
   },
   methods: {
+    async loadCapitalPool () {
+      try {
+        const res = await getProfile()
+        if (res.code === 1 && res.data) {
+          this.strategyTotalCapital = Number(res.data.strategy_total_capital || 0)
+          this.syncAllocatedCapital()
+        }
+      } catch (e) {
+        this.strategyTotalCapital = Number(this.userInfo?.strategy_total_capital || 0)
+        this.syncAllocatedCapital()
+      }
+    },
+    syncAllocatedCapital () {
+      this.baseForm.initialCapital = this.allocatedCapital
+    },
     shouldShowStrategyParam (key) {
       if (key === 'referencePrice') return this.botType === 'grid'
       // Hide the trailing TP activation / callback details on the confirm
@@ -999,7 +1033,8 @@ export default {
       this.baseForm.timeframe = tc.timeframe || '1h'
       this.baseForm.marketType = tc.market_type || 'swap'
       this.baseForm.leverage = tc.leverage || 5
-      this.baseForm.initialCapital = tc.initial_capital || 1000
+      this.baseForm.capitalAllocationPct = Number((tc.capital_allocation_pct != null ? tc.capital_allocation_pct : bot.capital_allocation_pct) || 0.1) * 100
+      this.baseForm.initialCapital = tc.initial_capital || bot.initial_capital || this.allocatedCapital
       this.baseForm.credentialId = bot.exchange_config?.credential_id || undefined
       this.currentExchangeId = (bot.exchange_config?.exchange_id || '').toLowerCase()
       if (tc.bot_params && typeof tc.bot_params === 'object') {
@@ -1024,7 +1059,8 @@ export default {
       if (base.timeframe) this.baseForm.timeframe = base.timeframe
       if (base.marketType) this.baseForm.marketType = base.marketType
       if (base.leverage) this.baseForm.leverage = base.leverage
-      this.baseForm.initialCapital = null
+      this.baseForm.capitalAllocationPct = 10
+      this.syncAllocatedCapital()
       if (p.strategyParams && typeof p.strategyParams === 'object') {
         const params = { ...p.strategyParams }
         delete params.amountPerGrid
@@ -1281,6 +1317,10 @@ export default {
       }
     },
     async buildPayload () {
+      if (Number(this.strategyTotalCapital || 0) <= 0) {
+        throw new Error(this.isZhLocale ? '请先在策略页设置总资金池' : 'Please set the strategy total capital first')
+      }
+      this.syncAllocatedCapital()
       const strategyParams = this.normalizeStrategyParams(this.strategyParams)
       const scriptParams = { ...strategyParams }
       if (this.botType === 'grid') {
@@ -1336,7 +1376,7 @@ export default {
           market_type: this.baseForm.marketType,
           leverage: leverage,
           trade_direction: tradeDirection,
-          initial_capital: this.baseForm.initialCapital,
+          capital_allocation_pct: Number(this.baseForm.capitalAllocationPct || 0) / 100,
           stop_loss_pct: this.botType === 'martingale' ? 0 : this.riskForm.stopLossPct,
           take_profit_pct: this.botType === 'martingale' ? 0 : this.riskForm.takeProfitPct,
           max_position: this.botType === 'martingale' ? 0 : this.riskForm.maxPosition,

@@ -31,6 +31,7 @@ from app.services.strategy_script_runtime import (
     StrategyScriptContext,
     compile_strategy_script_handlers,
 )
+from app.services.capital_pool import get_strategy_total_capital
 from app.services.paper_trading import cn_stock as cn_paper
 
 logger = get_logger(__name__)
@@ -834,7 +835,7 @@ class TradingExecutor:
         pos = len(df) - 2
         ctx.current_index = int(pos)
         row = df_exec.iloc[pos]
-        _init_cap = (trading_config or {}).get('initial_capital')
+        _init_cap = (trading_config or {}).get('strategy_total_capital') or (trading_config or {}).get('initial_capital')
         _bar_close_for_hydrate = None
         try:
             _bar_close_for_hydrate = float(row.get('close') or 0)
@@ -1054,6 +1055,21 @@ class TradingExecutor:
             except Exception:
                 logger.warning(f"Strategy {strategy_id} invalid initial_capital format, reset to 1000: {strategy.get('initial_capital')}")
                 initial_capital = 1000.0
+            try:
+                pool_total_capital = float(trading_config.get('strategy_total_capital') or 0)
+                if pool_total_capital <= 0 and strategy_user_id:
+                    pool_total_capital = get_strategy_total_capital(int(strategy_user_id))
+                if pool_total_capital <= 0:
+                    pool_total_capital = initial_capital
+                trading_config['strategy_total_capital'] = pool_total_capital
+                trading_config['capital_allocation_pct'] = float(
+                    trading_config.get('capital_allocation_pct')
+                    or strategy.get('capital_allocation_pct')
+                    or 0
+                )
+                trading_config['initial_capital'] = initial_capital
+            except Exception:
+                pool_total_capital = initial_capital
 
             indicator_id = None
             indicator_code = ''
@@ -1238,12 +1254,12 @@ class TradingExecutor:
             last_script_closed_ts = None
             if is_script:
                 script_ctx, last_script_closed_ts = self._init_script_strategy_context(
-                    strategy_id, df, trading_config, initial_capital
+                    strategy_id, df, trading_config, pool_total_capital
                 )
                 if on_init_script:
                     self._hydrate_script_ctx_from_positions(
                         script_ctx, strategy_id, symbol,
-                        initial_capital=initial_capital,
+                        initial_capital=pool_total_capital,
                         current_price=(float(df['close'].iloc[-1]) if df is not None and len(df) > 0 else None),
                     )
                     try:
@@ -1448,7 +1464,7 @@ class TradingExecutor:
                             try:
                                 self._hydrate_script_ctx_from_positions(
                                     script_ctx, strategy_id, symbol,
-                                    initial_capital=initial_capital,
+                                    initial_capital=pool_total_capital,
                                     current_price=float(current_price),
                                 )
                                 script_ctx._orders = []
@@ -1872,7 +1888,7 @@ class TradingExecutor:
                 query = """
                     SELECT
                         id, user_id, strategy_name, strategy_type, status,
-                        initial_capital, leverage, decide_interval,
+                        initial_capital, capital_allocation_pct, leverage, decide_interval,
                         execution_mode, notification_config,
                         indicator_config, exchange_config, trading_config, ai_model_config,
                         market_category, strategy_mode, strategy_code
@@ -3361,13 +3377,24 @@ class TradingExecutor:
                         return False
 
             # 2. 计算下单数量
-            available_capital = self._get_available_capital(
+            pool_total_capital = 0.0
+            try:
+                pool_total_capital = float((trading_config or {}).get("strategy_total_capital") or 0.0)
+            except Exception:
+                pool_total_capital = 0.0
+            if pool_total_capital <= 0:
+                pool_total_capital = float(initial_capital or 0.0)
+            available_capital = self._calculate_current_equity(
                 strategy_id,
-                initial_capital,
+                pool_total_capital,
                 current_positions=current_positions,
                 current_price=current_price,
                 symbol=symbol,
             )
+            allocation_capital = max(0.0, float(initial_capital or 0.0))
+            current_notional = self._current_position_value(current_positions, current_price)
+            current_budget_used = current_notional if market_type == 'spot' else (current_notional / max(float(leverage or 1), 1.0))
+            allocation_remaining = max(0.0, allocation_capital - current_budget_used)
             
             amount = 0.0
 
@@ -3389,17 +3416,24 @@ class TradingExecutor:
 
                  if is_bot_script and float(position_size) > 1.0:
                      # Bot scripts pass amount as absolute USDT notional, not ratio.
-                     usdt_notional = float(position_size)
+                     usdt_notional = min(float(position_size), allocation_remaining)
+                     if usdt_notional <= 0:
+                         append_strategy_log(strategy_id, "info", "Risk: strategy capital allocation exhausted; blocking entry")
+                         return False
                      if market_type == 'spot':
                          amount = usdt_notional / current_price
                      else:
                          amount = (usdt_notional * leverage) / current_price
                  else:
                      position_ratio = self._to_ratio(position_size, default=0.05)
+                     order_budget = min(available_capital * position_ratio, allocation_remaining)
+                     if order_budget <= 0:
+                         append_strategy_log(strategy_id, "info", "Risk: strategy capital allocation exhausted; blocking entry")
+                         return False
                      if market_type == 'spot':
-                         amount = available_capital * position_ratio / current_price
+                         amount = order_budget / current_price
                      else:
-                         amount = (available_capital * position_ratio * leverage) / current_price
+                         amount = (order_budget * leverage) / current_price
 
             # Reduce sizing: position_size is treated as a reduce ratio (close X% of current position).
             if sig in ("reduce_long", "reduce_short"):

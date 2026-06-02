@@ -3149,6 +3149,8 @@ class TradingExecutor:
                     # Best-effort persist a browser notification so UI can show "HOLD due to AI filter".
                     reason = (ai_info or {}).get("reason") or "ai_filter_rejected"
                     ai_decision = (ai_info or {}).get("ai_decision") or ""
+                    analysis_error = (ai_info or {}).get("analysis_error") or ""
+                    analysis_market = (ai_info or {}).get("analysis_market") or ""
                     title = f"AI过滤拦截开仓 | {symbol}"
                     msg = f"策略信号={sig}，AI决策={ai_decision or 'UNKNOWN'}，原因={reason}；已HOLD（不下单）"
                     self._persist_browser_notification(
@@ -3165,15 +3167,20 @@ class TradingExecutor:
                             "signal_type": str(sig),
                             "ai_decision": str(ai_decision),
                             "reason": str(reason),
+                            "analysis_error": str(analysis_error),
+                            "analysis_market": str(analysis_market),
                             "signal_ts": int(signal_ts or 0),
                         },
                     )
                     logger.info(
-                        f"AI entry filter rejected: strategy_id={strategy_id} symbol={symbol} signal={sig} ai={ai_decision} reason={reason}"
+                        f"AI entry filter rejected: strategy_id={strategy_id} symbol={symbol} signal={sig} "
+                        f"ai={ai_decision} reason={reason} analysis_market={analysis_market} "
+                        f"analysis_error={analysis_error}"
                     )
                     append_strategy_log(
                         strategy_id, "info",
-                        f"AI filter blocked entry: {sig} {symbol}, decision={ai_decision}, reason={reason}",
+                        f"AI filter blocked entry: {sig} {symbol}, decision={ai_decision}, "
+                        f"reason={reason}, analysis_market={analysis_market}, analysis_error={analysis_error}",
                     )
                     append_strategy_execution_event(
                         strategy_id=strategy_id,
@@ -3186,7 +3193,12 @@ class TradingExecutor:
                         reason=str(reason),
                         price=float(current_price or 0.0),
                         position_state=state,
-                        context={"ai_decision": ai_decision, "signal_ts": int(signal_ts or 0)},
+                        context={
+                            "ai_decision": ai_decision,
+                            "analysis_market": analysis_market,
+                            "analysis_error": analysis_error,
+                            "signal_ts": int(signal_ts or 0),
+                        },
                     )
                     return False
 
@@ -3648,6 +3660,34 @@ class TradingExecutor:
                 return False
         return False
 
+    @staticmethod
+    def _resolve_entry_ai_filter_market(
+        *,
+        ai_model_config: Optional[Dict[str, Any]],
+        trading_config: Optional[Dict[str, Any]],
+        market_category: Optional[str],
+    ) -> str:
+        """Resolve the market passed to FastAnalysisService for entry AI filtering."""
+        amc = ai_model_config if isinstance(ai_model_config, dict) else {}
+        tc = trading_config if isinstance(trading_config, dict) else {}
+
+        candidates = [
+            amc.get("market"),
+            amc.get("analysis_market"),
+            amc.get("market_category"),
+            amc.get("marketCategory"),
+            tc.get("analysis_market"),
+            tc.get("analysisMarket"),
+            market_category,
+            tc.get("market_category"),
+            tc.get("marketCategory"),
+        ]
+        for value in candidates:
+            market = str(value or "").strip()
+            if market:
+                return market
+        return "Crypto"
+
     def _entry_ai_filter_allows(
         self,
         *,
@@ -3656,6 +3696,7 @@ class TradingExecutor:
         signal_type: str,
         ai_model_config: Optional[Dict[str, Any]],
         trading_config: Optional[Dict[str, Any]],
+        market_category: Optional[str] = None,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Run internal AI analysis and decide whether an entry signal is allowed.
@@ -3668,8 +3709,11 @@ class TradingExecutor:
         amc = ai_model_config if isinstance(ai_model_config, dict) else {}
         tc = trading_config if isinstance(trading_config, dict) else {}
 
-        # Market for AnalysisService. Live trading executor is Crypto-focused.
-        market = str(amc.get("market") or amc.get("analysis_market") or "Crypto").strip() or "Crypto"
+        market = self._resolve_entry_ai_filter_market(
+            ai_model_config=amc,
+            trading_config=tc,
+            market_category=market_category,
+        )
 
         # Optional model override (OpenRouter model id)
         model = amc.get("model") or amc.get("openrouter_model") or amc.get("openrouterModel") or None
@@ -3712,24 +3756,56 @@ class TradingExecutor:
             result = service.analyze(market, symbol, language, model=model)
 
             if isinstance(result, dict) and result.get("error"):
-                return False, {"ai_decision": "", "reason": "analysis_error", "analysis_error": str(result.get("error") or "")}
+                return False, {
+                    "ai_decision": "",
+                    "reason": "analysis_error",
+                    "analysis_error": str(result.get("error") or ""),
+                    "analysis_market": market,
+                }
 
             # FastAnalysisService 直接返回 decision 字段
             ai_dec = str(result.get("decision", "")).strip().upper()
             if not ai_dec or ai_dec not in ("BUY", "SELL", "HOLD"):
-                return False, {"ai_decision": ai_dec, "reason": "missing_ai_decision"}
+                return False, {
+                    "ai_decision": ai_dec,
+                    "reason": "missing_ai_decision",
+                    "analysis_market": market,
+                }
 
             expected = "BUY" if signal_type == "open_long" else "SELL"
             confidence = result.get("confidence", 50)
             summary = result.get("summary", "")
             
             if ai_dec == expected:
-                return True, {"ai_decision": ai_dec, "reason": "match", "confidence": confidence, "summary": summary}
+                return True, {
+                    "ai_decision": ai_dec,
+                    "reason": "match",
+                    "confidence": confidence,
+                    "summary": summary,
+                    "analysis_market": market,
+                }
             if ai_dec == "HOLD":
-                return False, {"ai_decision": ai_dec, "reason": "ai_hold", "confidence": confidence, "summary": summary}
-            return False, {"ai_decision": ai_dec, "reason": "direction_mismatch", "confidence": confidence, "summary": summary}
+                return False, {
+                    "ai_decision": ai_dec,
+                    "reason": "ai_hold",
+                    "confidence": confidence,
+                    "summary": summary,
+                    "analysis_market": market,
+                }
+            return False, {
+                "ai_decision": ai_dec,
+                "reason": "direction_mismatch",
+                "confidence": confidence,
+                "summary": summary,
+                "analysis_market": market,
+            }
         except Exception as e:
-            return False, {"ai_decision": "", "reason": "analysis_exception", "analysis_error": str(e)}
+            return False, {
+                "ai_decision": "",
+                "reason": "analysis_exception",
+                "analysis_error": str(e),
+                "analysis_market": market,
+            }
 
     def _extract_ai_trade_decision(self, analysis_result: Any) -> str:
         """

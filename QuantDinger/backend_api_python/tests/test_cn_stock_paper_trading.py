@@ -163,3 +163,49 @@ def test_cnstock_paper_strategy_rejects_when_market_closed(monkeypatch):
     assert accepted is False
     assert events[-1]["reason"] == "cnstock_market_closed"
     assert any("market is closed" in args[2] for args in logs)
+
+
+def test_entry_ai_filter_uses_strategy_market_category(monkeypatch):
+    executor = object.__new__(TradingExecutor)
+    calls = []
+
+    class FakeBilling:
+        def is_billing_enabled(self):
+            return False
+
+    class FakeFastAnalysis:
+        def analyze(self, market, symbol, language, model=None):
+            calls.append((market, symbol, language, model))
+            return {"decision": "BUY", "confidence": 82, "summary": "ok"}
+
+    monkeypatch.setattr(
+        "app.services.billing_service.get_billing_service",
+        lambda: FakeBilling(),
+    )
+    monkeypatch.setattr(
+        "app.services.fast_analysis.get_fast_analysis_service",
+        lambda: FakeFastAnalysis(),
+    )
+
+    allowed, info = executor._entry_ai_filter_allows(
+        strategy_id=5,
+        symbol="600010",
+        signal_type="open_long",
+        ai_model_config={},
+        trading_config={},
+        market_category="CNStock",
+    )
+
+    assert allowed is True
+    assert info["analysis_market"] == "CNStock"
+    assert calls == [("CNStock", "600010", "zh-CN", None)]
+
+
+def test_entry_ai_filter_market_config_overrides_strategy_category():
+    market = TradingExecutor._resolve_entry_ai_filter_market(
+        ai_model_config={"analysis_market": "USStock"},
+        trading_config={},
+        market_category="CNStock",
+    )
+
+    assert market == "USStock"

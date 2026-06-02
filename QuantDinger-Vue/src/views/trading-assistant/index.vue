@@ -88,6 +88,25 @@
                 </a-radio-group>
               </div>
 
+              <div class="capital-pool-panel">
+                <div class="capital-pool-main">
+                  <span class="capital-pool-label">总资金池</span>
+                  <strong>{{ formatCapitalPoolMoney(capitalPool.strategy_total_capital) }}</strong>
+                </div>
+                <div class="capital-pool-meta">
+                  <span>已分配 {{ formatPct(capitalPool.allocated_pct) }}</span>
+                  <span>剩余 {{ formatPct(capitalPool.remaining_pct) }}</span>
+                </div>
+                <a-progress
+                  :percent="Math.min(100, Math.round((capitalPool.allocated_pct || 0) * 10000) / 100)"
+                  size="small"
+                  :show-info="false" />
+                <a-button size="small" block @click="openCapitalPoolModal">
+                  <a-icon type="setting" />
+                  设置总资金
+                </a-button>
+              </div>
+
               <a-spin :spinning="loading">
                 <div v-if="!loading && strategiesForPage.length === 0" class="strategy-empty-state">
                   <a-empty :description="$t('trading-assistant.empty.title')" />
@@ -779,13 +798,19 @@
 
                       <a-row :gutter="16">
                         <a-col :xs="24" :sm="24" :md="12" :lg="12">
-                          <a-form-item :label="$t('trading-assistant.form.initialCapital')">
+                          <a-form-item label="策略资金占比">
                             <a-input-number
-                              v-decorator="['initial_capital', { rules: [{ required: true, message: $t('trading-assistant.validation.initialCapitalRequired') }], initialValue: 1000 }]"
-                              :min="10"
-                              :step="100"
+                              v-decorator="['capital_allocation_pct', { rules: [{ required: true, message: '请输入策略资金占比' }], initialValue: 10 }]"
+                              :min="0.01"
+                              :max="100"
+                              :step="1"
                               :precision="2"
+                              :formatter="v => `${v}%`"
+                              :parser="v => String(v || '').replace('%', '')"
                               style="width: 100%" />
+                            <div class="form-item-hint">
+                              分配资金：{{ formatAllocationPreview(form.getFieldValue('capital_allocation_pct')) }}
+                            </div>
                           </a-form-item>
                         </a-col>
                         <a-col :xs="24" :sm="24" :md="12" :lg="12">
@@ -959,14 +984,20 @@
 
                     <a-row :gutter="16">
                       <a-col :xs="24" :sm="12">
-                        <a-form-item :label="$t('trading-assistant.form.initialCapital')">
+                        <a-form-item label="策略资金占比">
                           <a-input-number
-                            v-decorator="['initial_capital', { initialValue: 1000, rules: [{ required: true }] }]"
-                            :min="10"
-                            :step="100"
+                            v-decorator="['capital_allocation_pct', { initialValue: 10, rules: [{ required: true }] }]"
+                            :min="0.01"
+                            :max="100"
+                            :step="1"
                             :precision="2"
+                            :formatter="v => `${v}%`"
+                            :parser="v => String(v || '').replace('%', '')"
                             style="width: 100%"
                           />
+                          <div class="form-item-hint">
+                            分配资金：{{ formatAllocationPreview(form.getFieldValue('capital_allocation_pct')) }}
+                          </div>
                         </a-form-item>
                       </a-col>
                       <a-col :xs="24" :sm="12">
@@ -1395,6 +1426,23 @@
       :visible.sync="showExchangeAccountModal"
       @success="handleExchangeAccountCreated"
     />
+    <a-modal
+      :visible="showCapitalPoolModal"
+      title="设置策略总资金池"
+      :confirm-loading="savingCapitalPool"
+      @ok="saveCapitalPool"
+      @cancel="showCapitalPoolModal = false">
+      <a-form-model>
+        <a-form-model-item label="总资金">
+          <a-input-number
+            v-model="capitalPoolForm.strategy_total_capital"
+            :min="0"
+            :step="100"
+            :precision="2"
+            style="width: 100%" />
+        </a-form-model-item>
+      </a-form-model>
+    </a-modal>
   </div>
 </template>
 
@@ -1402,7 +1450,7 @@
 import { getStrategyList, startStrategy, stopStrategy, deleteStrategy, updateStrategy, createStrategy, getStrategyEquityCurve, getStrategyPositions, batchCreateStrategies, batchStartStrategies, batchStopStrategies, batchDeleteStrategies } from '@/api/strategy'
 import { getWatchlist, addWatchlist, searchSymbols, getHotSymbols } from '@/api/market'
 import { listExchangeCredentials } from '@/api/credentials'
-import { getNotificationSettings } from '@/api/user'
+import { getNotificationSettings, updateProfile } from '@/api/user'
 import { baseMixin } from '@/store/app-mixin'
 import request from '@/utils/request'
 import TradingRecords from './components/TradingRecords.vue'
@@ -1916,6 +1964,18 @@ export default {
       loading: false,
       loadingRecords: false,
       strategies: [],
+      capitalPool: {
+        strategy_total_capital: 0,
+        allocated_pct: 0,
+        remaining_pct: 1,
+        allocated_capital: 0,
+        remaining_capital: 0
+      },
+      showCapitalPoolModal: false,
+      savingCapitalPool: false,
+      capitalPoolForm: {
+        strategy_total_capital: 0
+      },
       selectedStrategy: null,
       showFormModal: false,
       pendingRouteIndicatorId: '',
@@ -2715,6 +2775,43 @@ export default {
     onNotifyChannelsChange (vals) {
       this.notifyChannelsUi = Array.isArray(vals) ? vals : []
     },
+    formatPct (value) {
+      const n = Number(value || 0)
+      return `${(n * 100).toFixed(2)}%`
+    },
+    formatCapitalPoolMoney (value) {
+      const n = Number(value || 0)
+      return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    },
+    formatAllocationPreview (pctValue) {
+      const total = Number(this.capitalPool.strategy_total_capital || 0)
+      const pct = Number(pctValue || 0) / 100
+      if (!total || !pct) return '$0.00'
+      return this.formatCapitalPoolMoney(total * pct)
+    },
+    openCapitalPoolModal () {
+      this.capitalPoolForm.strategy_total_capital = Number(this.capitalPool.strategy_total_capital || 0)
+      this.showCapitalPoolModal = true
+    },
+    async saveCapitalPool () {
+      this.savingCapitalPool = true
+      try {
+        const res = await updateProfile({
+          strategy_total_capital: Number(this.capitalPoolForm.strategy_total_capital || 0)
+        })
+        if (res.code === 1) {
+          this.$message.success('总资金池已更新')
+          this.showCapitalPoolModal = false
+          await this.loadStrategies()
+        } else {
+          this.$message.error(res.msg || '总资金池更新失败')
+        }
+      } catch (e) {
+        this.$message.error('总资金池更新失败')
+      } finally {
+        this.savingCapitalPool = false
+      }
+    },
     formatCurrency (value) {
       if (value === null || value === undefined) return '-'
       return formatMarketMoney(value, this.selectedStrategy && this.selectedStrategy.market_category, { fallback: '-' })
@@ -2736,6 +2833,12 @@ export default {
           // 显示所有策略（包括指标策略和AI策略）
           const allStrategies = res.data.strategies || []
           this.strategies = allStrategies
+          if (res.data.capital_pool) {
+            this.capitalPool = {
+              ...this.capitalPool,
+              ...res.data.capital_pool
+            }
+          }
           // 如果有选中的策略，更新它
           if (this.selectedStrategy) {
             const updated = this.strategies.find(s => s.id === this.selectedStrategy.id)
@@ -2809,6 +2912,11 @@ export default {
       this._openCreateModal()
     },
     _openCreateModal () {
+      if (!this.editingStrategy && Number(this.capitalPool.strategy_total_capital || 0) <= 0) {
+        this.$message.warning('请先设置策略总资金池')
+        this.openCapitalPoolModal()
+        return
+      }
       this.strategyType = 'indicator'
       this.currentStep = 0
       this.currentExchangeId = ''
@@ -2836,7 +2944,7 @@ export default {
         notify_channels: ['browser'],
         save_credential: false,
         live_disclaimer_ack: false,
-        initial_capital: 1000,
+        capital_allocation_pct: 10,
         market_type: 'swap',
         leverage: 5,
         trade_direction: 'long',
@@ -2955,7 +3063,7 @@ export default {
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
           symbol: symbolValue,
-          initial_capital: tc.initial_capital != null ? tc.initial_capital : (strategy.initial_capital || 1000),
+          capital_allocation_pct: ((tc.capital_allocation_pct != null ? tc.capital_allocation_pct : strategy.capital_allocation_pct) || 0.1) * 100,
           leverage: tc.leverage != null ? tc.leverage : (strategy.leverage || 5),
           trade_direction: tc.trade_direction || 'long',
           timeframe: tc.timeframe || strategy.timeframe || '15m',
@@ -3062,7 +3170,7 @@ export default {
         this.form.setFieldsValue({
           strategy_name: strategy.strategy_name,
           symbol: symbolValue,
-          initial_capital: tc.initial_capital,
+          capital_allocation_pct: ((tc.capital_allocation_pct != null ? tc.capital_allocation_pct : strategy.capital_allocation_pct) || 0.1) * 100,
           leverage: tc.leverage,
           trade_direction: tc.trade_direction || 'long',
           timeframe: tc.timeframe || '1H',
@@ -3810,7 +3918,7 @@ export default {
       // ===== Script mode: 3 linear steps (0=basic, 1=code, 2=execution) =====
       if (this.strategyMode === 'script') {
         if (this.currentStep === 0) {
-          const fieldsToValidate = ['strategy_name', 'symbol', 'initial_capital', 'timeframe']
+          const fieldsToValidate = ['strategy_name', 'symbol', 'capital_allocation_pct', 'timeframe']
           this.form.validateFields(fieldsToValidate, (err) => {
             if (err) return
             this.currentStep = 1
@@ -3834,7 +3942,7 @@ export default {
       // ===== Signal mode (original logic) =====
       if (this.currentStep === 0) {
         const fieldsToValidate = ['indicator_id', 'strategy_name']
-        fieldsToValidate.push('initial_capital', 'market_type', 'leverage', 'trade_direction', 'timeframe')
+        fieldsToValidate.push('capital_allocation_pct', 'market_type', 'leverage', 'trade_direction', 'timeframe')
 
         if (this.isEditMode) {
           fieldsToValidate.push('symbol')
@@ -3944,7 +4052,7 @@ export default {
                 : {}
               const tradingConfig = {
                 ...prevTc,
-                initial_capital: values.initial_capital || 1000,
+                capital_allocation_pct: Number(values.capital_allocation_pct || 0) / 100,
                 leverage,
                 trade_direction: tradeDirection,
                 timeframe: values.timeframe || '15m',
@@ -4124,7 +4232,7 @@ export default {
                 exchange_id: this.currentExchangeId || undefined
               }) : undefined,
               trading_config: {
-                initial_capital: values.initial_capital,
+                capital_allocation_pct: Number(values.capital_allocation_pct || 0) / 100,
                 leverage: leverage,
                 trade_direction: tradeDirection,
                 timeframe: values.timeframe,
@@ -4837,6 +4945,36 @@ export default {
               margin-right: 4px;
             }
           }
+        }
+      }
+
+      .capital-pool-panel {
+        margin-bottom: 16px;
+        padding: 12px;
+        border: 1px solid #e8e8e8;
+        border-radius: 6px;
+        background: #fafafa;
+
+        .capital-pool-main,
+        .capital-pool-meta {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+
+        .capital-pool-main {
+          margin-bottom: 6px;
+        }
+
+        .capital-pool-label,
+        .capital-pool-meta {
+          color: #8c8c8c;
+          font-size: 12px;
+        }
+
+        /deep/ .ant-progress {
+          margin: 4px 0 8px;
         }
       }
 

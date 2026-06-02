@@ -119,6 +119,7 @@ def _apply_init_sql(logger):
             cur = conn.cursor()
             try:
                 cur.execute(sql_text)
+                _apply_capital_pool_sql(cur)
             finally:
                 cur.close()
             conn.commit()
@@ -130,6 +131,52 @@ def _apply_init_sql(logger):
             "or set SKIP_AUTO_MIGRATE=true to silence this on boot.",
             exc,
         )
+
+
+def _apply_capital_pool_sql(cur):
+    """Apply capital-pool compatibility columns and one-time backfill."""
+    cur.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'qd_users' AND column_name = 'strategy_total_capital'
+            ) THEN
+                ALTER TABLE qd_users ADD COLUMN strategy_total_capital DECIMAL(20,8) DEFAULT 0;
+                RAISE NOTICE 'Added strategy_total_capital column to qd_users';
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'qd_strategies_trading' AND column_name = 'capital_allocation_pct'
+            ) THEN
+                ALTER TABLE qd_strategies_trading ADD COLUMN capital_allocation_pct DECIMAL(10,6) DEFAULT 0;
+                RAISE NOTICE 'Added capital_allocation_pct column to qd_strategies_trading';
+            END IF;
+
+            UPDATE qd_users u
+            SET strategy_total_capital = totals.total_capital
+            FROM (
+                SELECT user_id, COALESCE(SUM(COALESCE(initial_capital, 0)), 0) AS total_capital
+                FROM qd_strategies_trading
+                GROUP BY user_id
+            ) totals
+            WHERE u.id = totals.user_id
+              AND COALESCE(u.strategy_total_capital, 0) <= 0
+              AND totals.total_capital > 0;
+
+            UPDATE qd_strategies_trading s
+            SET capital_allocation_pct = CASE
+                WHEN COALESCE(u.strategy_total_capital, 0) > 0
+                THEN LEAST(1, GREATEST(0, COALESCE(s.initial_capital, 0) / u.strategy_total_capital))
+                ELSE 0
+            END
+            FROM qd_users u
+            WHERE u.id = s.user_id
+              AND COALESCE(s.capital_allocation_pct, 0) <= 0;
+        END$$;
+        """
+    )
 
 
 def _verify_table_access(logger):

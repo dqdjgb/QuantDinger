@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
+from app.services.capital_pool import get_capital_pool_summary, resolve_strategy_allocation
 from app.services.symbol_name import normalize_crypto_symbol
 
 logger = get_logger(__name__)
@@ -682,6 +683,30 @@ class StrategyService:
         except Exception:
             return 'IndicatorStrategy'
 
+    def get_capital_pool_summary(self, user_id: int, exclude_strategy_id: Optional[int] = None) -> Dict[str, Any]:
+        return get_capital_pool_summary(user_id, exclude_strategy_id=exclude_strategy_id)
+
+    def _resolve_capital_fields(
+        self,
+        user_id: int,
+        trading_config: Dict[str, Any],
+        *,
+        existing_strategy_id: Optional[int] = None,
+        existing_allocation_pct: Optional[float] = None,
+    ) -> tuple[float, float, Dict[str, Any]]:
+        if not isinstance(trading_config, dict):
+            trading_config = {}
+        total_capital, allocation_pct, allocated_capital = resolve_strategy_allocation(
+            int(user_id or 1),
+            trading_config,
+            existing_strategy_id=existing_strategy_id,
+            existing_allocation_pct=existing_allocation_pct,
+        )
+        trading_config['capital_allocation_pct'] = allocation_pct
+        trading_config['strategy_total_capital'] = total_capital
+        trading_config['initial_capital'] = allocated_capital
+        return allocated_capital, allocation_pct, trading_config
+
     def update_strategy_status(self, strategy_id: int, status: str, user_id: int = None) -> bool:
         """Update strategy status. If user_id is provided, verify ownership."""
         try:
@@ -930,6 +955,8 @@ class StrategyService:
                 ex = self._safe_json_loads(r.get('exchange_config'), {})
                 ind = self._safe_json_loads(r.get('indicator_config'), {})
                 tr = self._safe_json_loads(r.get('trading_config'), {})
+                tr.setdefault('capital_allocation_pct', float(r.get('capital_allocation_pct') or 0.0))
+                tr.setdefault('initial_capital', float(r.get('initial_capital') or 0.0))
                 ai = self._safe_json_loads(r.get('ai_model_config'), {})
                 notify = self._safe_json_loads(r.get('notification_config'), {})
                 m = metrics.get(int(r['id']), {'realized_pnl': 0.0, 'unrealized_pnl': 0.0})
@@ -970,6 +997,8 @@ class StrategyService:
             r['exchange_config'] = self._safe_json_loads(r.get('exchange_config'), {})
             r['indicator_config'] = self._safe_json_loads(r.get('indicator_config'), {})
             r['trading_config'] = self._safe_json_loads(r.get('trading_config'), {})
+            r['trading_config'].setdefault('capital_allocation_pct', float(r.get('capital_allocation_pct') or 0.0))
+            r['trading_config'].setdefault('initial_capital', float(r.get('initial_capital') or 0.0))
             r['ai_model_config'] = self._safe_json_loads(r.get('ai_model_config'), {})
             r['notification_config'] = self._safe_json_loads(r.get('notification_config'), {})
             r['bot_display'] = self._build_bot_display(r['trading_config'])
@@ -1061,7 +1090,10 @@ class StrategyService:
             if isinstance(trading_config, dict):
                 trading_config['symbol'] = symbol
         timeframe = (trading_config or {}).get('timeframe')
-        initial_capital = (trading_config or {}).get('initial_capital') or payload.get('initial_capital') or 1000
+        initial_capital, capital_allocation_pct, trading_config = self._resolve_capital_fields(
+            int(user_id or 1),
+            trading_config,
+        )
         leverage = (trading_config or {}).get('leverage') or 1
         market_type = (trading_config or {}).get('market_type') or 'swap'
         
@@ -1089,11 +1121,11 @@ class StrategyService:
                 """
                 INSERT INTO qd_strategies_trading
                 (user_id, strategy_name, strategy_type, market_category, execution_mode, notification_config,
-                 status, symbol, timeframe, initial_capital, leverage, market_type,
+                 status, symbol, timeframe, initial_capital, capital_allocation_pct, leverage, market_type,
                  exchange_config, indicator_config, trading_config, ai_model_config, decide_interval,
                  strategy_group_id, group_base_name, strategy_mode, strategy_code,
                  created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                 """,
                 (
                     user_id,
@@ -1106,6 +1138,7 @@ class StrategyService:
                     symbol,
                     timeframe,
                     float(initial_capital or 1000),
+                    float(capital_allocation_pct or 0),
                     int(leverage or 1),
                     market_type,
                     self._dump_json_or_encrypt(exchange_config, encrypt=False) if exchange_config else '',
@@ -1142,6 +1175,7 @@ class StrategyService:
         symbols = payload.get('symbols') or []
         if not symbols or not isinstance(symbols, list):
             raise ValueError("symbols array is required")
+        symbol_count = max(1, len(symbols))
         
         base_name = (payload.get('strategy_name') or '').strip()
         if not base_name:
@@ -1211,6 +1245,14 @@ class StrategyService:
                 # Update symbol in trading_config
                 trading_config = dict(single_payload.get('trading_config') or {})
                 trading_config['symbol'] = symbol_name
+                if trading_config.get('capital_allocation_pct') is not None:
+                    try:
+                        raw_alloc = float(trading_config.get('capital_allocation_pct') or 0)
+                        if raw_alloc > 1:
+                            raw_alloc = raw_alloc / 100.0
+                        trading_config['capital_allocation_pct'] = raw_alloc / symbol_count
+                    except Exception:
+                        pass
                 single_payload['trading_config'] = trading_config
                 
                 new_id = self.create_strategy(single_payload)
@@ -1407,7 +1449,12 @@ class StrategyService:
             if isinstance(trading_config, dict):
                 trading_config['symbol'] = symbol
         timeframe = (trading_config or {}).get('timeframe')
-        initial_capital = (trading_config or {}).get('initial_capital') or existing.get('initial_capital') or 1000
+        initial_capital, capital_allocation_pct, trading_config = self._resolve_capital_fields(
+            int(existing.get('user_id') or user_id or 1),
+            trading_config,
+            existing_strategy_id=strategy_id,
+            existing_allocation_pct=existing.get('capital_allocation_pct'),
+        )
         leverage = (trading_config or {}).get('leverage') or existing.get('leverage') or 1
         market_type = (trading_config or {}).get('market_type') or existing.get('market_type') or 'swap'
 
@@ -1435,6 +1482,7 @@ class StrategyService:
                     symbol = ?,
                     timeframe = ?,
                     initial_capital = ?,
+                    capital_allocation_pct = ?,
                     leverage = ?,
                     market_type = ?,
                     exchange_config = ?,
@@ -1455,6 +1503,7 @@ class StrategyService:
                     symbol,
                     timeframe,
                     float(initial_capital or 1000),
+                    float(capital_allocation_pct or 0),
                     int(leverage or 1),
                     market_type,
                     self._dump_json_or_encrypt(exchange_config, encrypt=False) if exchange_config else '',

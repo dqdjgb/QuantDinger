@@ -3426,7 +3426,7 @@ class TradingExecutor:
                     self._record_trade(
                         strategy_id=strategy_id, symbol=symbol, type=signal_type,
                         price=fill_price, amount=amount, value=amount*fill_price,
-                        commission=_est_commission
+                        commission=_est_commission, signal_ts=int(signal_ts or 0)
                     )
                     side = 'short' if 'short' in signal_type else 'long'
                     
@@ -3488,7 +3488,7 @@ class TradingExecutor:
                     self._record_trade(
                         strategy_id=strategy_id, symbol=symbol, type=signal_type,
                         price=fill_price, amount=amount, value=amount*fill_price,
-                        profit=reduce_profit, commission=_est_commission
+                        profit=reduce_profit, commission=_est_commission, signal_ts=int(signal_ts or 0)
                     )
                     
                     new_size = max(0.0, old_size - float(amount or 0.0))
@@ -3537,7 +3537,7 @@ class TradingExecutor:
                     self._record_trade(
                         strategy_id=strategy_id, symbol=symbol, type=signal_type,
                         price=fill_price, amount=amount, value=amount*fill_price,
-                        profit=close_profit, commission=_est_commission
+                        profit=close_profit, commission=_est_commission, signal_ts=int(signal_ts or 0)
                     )
                     self._close_position(strategy_id, symbol, side)
                     _pstr = f", profit={close_profit:.4f}" if close_profit is not None else ""
@@ -4231,7 +4231,19 @@ class TradingExecutor:
             logger.warning(f"Failed to calculate CNStock paper sellable shares for strategy {strategy_id}: {e}")
             return 0.0
 
-    def _record_trade(self, strategy_id: int, symbol: str, type: str, price: float, amount: float, value: float, profit: float = None, commission: float = None):
+    def _record_trade(
+        self,
+        strategy_id: int,
+        symbol: str,
+        type: str,
+        price: float,
+        amount: float,
+        value: float,
+        profit: float = None,
+        commission: float = None,
+        signal_ts: int = 0,
+        executed_ts: int = 0,
+    ):
         """记录交易到数据库"""
         try:
             # Get user_id from strategy
@@ -4248,10 +4260,12 @@ class TradingExecutor:
                     INSERT INTO qd_strategy_trades (
                         user_id, strategy_id, symbol, type, price, amount, value, commission, profit, created_at
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        CASE WHEN %s > 0 THEN to_timestamp(%s) ELSE NOW() END
                     )
                 """
-                cursor.execute(query, (user_id, strategy_id, symbol, type, price, amount, value, commission or 0, profit))
+                event_ts = int(executed_ts or signal_ts or 0)
+                cursor.execute(query, (user_id, strategy_id, symbol, type, price, amount, value, commission or 0, profit, event_ts, event_ts))
                 db.commit()
                 cursor.close()
         except Exception as e:

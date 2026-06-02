@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Blueprint, jsonify, request, g
 
@@ -300,7 +300,11 @@ def _compute_performance_stats(trades: List[Dict[str, Any]], initial_capital: fl
     }
 
 
-def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _compute_strategy_stats(
+    trades: List[Dict[str, Any]],
+    strategies: List[Dict[str, Any]],
+    positions: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """
     Compute per-strategy statistics.
     Only includes strategies that still exist (not deleted).
@@ -329,19 +333,32 @@ def _compute_strategy_stats(trades: List[Dict[str, Any]], strategies: List[Dict[
             sid_to_trades[sid] = []
         sid_to_trades[sid].append(t)
 
+    sid_to_unrealized: Dict[int, float] = {}
+    for p in positions or []:
+        sid = _safe_int(p.get("strategy_id"), 0)
+        if sid not in existing_strategy_ids:
+            continue
+        sid_to_unrealized[sid] = sid_to_unrealized.get(sid, 0.0) + _safe_float(p.get("unrealized_pnl"), 0.0)
+
     result = []
-    for sid, strades in sid_to_trades.items():
+    active_sids = sorted(set(sid_to_trades.keys()) | set(sid_to_unrealized.keys()))
+    for sid in active_sids:
+        strades = sid_to_trades.get(sid, [])
         capital = sid_to_capital.get(sid, 0.0)
         stats = _compute_performance_stats(strades, initial_capital=capital)
-        total_pnl = sum(_net_trade_pnl(t) for t in strades)
+        realized_pnl = sum(_net_trade_pnl(t) for t in strades if t.get("profit") is not None)
+        unrealized_pnl = sid_to_unrealized.get(sid, 0.0)
+        total_pnl = realized_pnl + unrealized_pnl
         roi = (total_pnl / capital * 100) if capital > 0 else 0.0
 
         result.append({
             "strategy_id": sid,
             "strategy_name": sid_to_name.get(sid, f"Strategy_{sid}"),
-            "total_trades": stats["total_trades"],
+            "total_trades": len(strades),
             "win_rate": stats["win_rate"],
             "profit_factor": stats["profit_factor"],
+            "realized_pnl": round(realized_pnl, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
             "total_pnl": round(total_pnl, 2),
             "roi": round(roi, 2),
             "max_drawdown": stats["max_drawdown"],
@@ -459,7 +476,6 @@ def summary():
                 WHERE t.user_id = ?
                   AND s.user_id = ?
                   AND COALESCE(LOWER(TRIM(s.strategy_mode)), 'signal') <> 'bot'
-                  AND t.profit IS NOT NULL
                 """,
                 (user_id, user_id)
             )
@@ -530,10 +546,10 @@ def summary():
         perf_stats["total_trades"] = int(total_trades_all)
 
         # Compute per-strategy statistics
-        strategy_stats = _compute_strategy_stats(recent_trades, strategies)
+        strategy_stats = _compute_strategy_stats(recent_trades, strategies, current_positions)
 
         # Include realized PnL from trades
-        total_realized_pnl = sum(_net_trade_pnl(t) for t in recent_trades)
+        total_realized_pnl = sum(_net_trade_pnl(t) for t in recent_trades if t.get("profit") is not None)
         total_pnl = float(total_unrealized_pnl + total_realized_pnl)
         total_equity = float(total_initial_capital + total_pnl)
 

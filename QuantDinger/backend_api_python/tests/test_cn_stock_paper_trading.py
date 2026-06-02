@@ -103,6 +103,19 @@ def test_cnstock_trading_time_blocks_closed_periods(monkeypatch):
     assert cn_stock.is_trading_time(datetime(2026, 6, 6, 10, 0, tzinfo=SH_TZ)) is False
 
 
+def test_cnstock_trading_window_uses_trade_calendar_and_buffer(monkeypatch):
+    _mock_trade_dates(monkeypatch, {"2026-06-02"})
+
+    assert cn_stock.is_trading_window(datetime(2026, 6, 2, 9, 20, tzinfo=SH_TZ)) is True
+    assert cn_stock.is_trading_window(datetime(2026, 6, 2, 11, 40, tzinfo=SH_TZ)) is True
+    assert cn_stock.is_trading_window(datetime(2026, 6, 2, 11, 40, 1, tzinfo=SH_TZ)) is False
+    assert cn_stock.is_trading_window(datetime(2026, 6, 2, 12, 50, tzinfo=SH_TZ)) is True
+    assert cn_stock.is_trading_window(datetime(2026, 6, 2, 15, 10, tzinfo=SH_TZ)) is True
+    assert cn_stock.is_trading_window(datetime(2026, 6, 2, 9, 19, 59, tzinfo=SH_TZ)) is False
+    assert cn_stock.is_trading_window(datetime(2026, 6, 2, 15, 10, 1, tzinfo=SH_TZ)) is False
+    assert cn_stock.is_trading_window(datetime(2026, 10, 1, 10, 0, tzinfo=SH_TZ)) is False
+
+
 def test_cnstock_trading_time_blocks_weekday_not_in_trade_calendar(monkeypatch):
     _mock_trade_dates(monkeypatch, {"2026-06-02"})
 
@@ -163,6 +176,13 @@ def test_cnstock_paper_strategy_rejects_when_market_closed(monkeypatch):
     assert accepted is False
     assert events[-1]["reason"] == "cnstock_market_closed"
     assert any("market is closed" in args[2] for args in logs)
+
+
+def test_cnstock_strategy_tick_skips_outside_trading_window(monkeypatch):
+    monkeypatch.setattr(trading_executor_module.cn_paper, "is_trading_window", lambda buffer_minutes=10: False)
+
+    assert TradingExecutor._should_skip_cnstock_strategy_tick("CNStock", buffer_minutes=10) is True
+    assert TradingExecutor._should_skip_cnstock_strategy_tick("Crypto", buffer_minutes=10) is False
 
 
 def test_entry_ai_filter_uses_strategy_market_category(monkeypatch):

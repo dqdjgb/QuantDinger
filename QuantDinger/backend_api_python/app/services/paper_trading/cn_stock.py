@@ -21,6 +21,7 @@ TRADING_SESSIONS = (
     (time(9, 30), time(11, 30)),
     (time(13, 0), time(15, 0)),
 )
+DEFAULT_TRADING_WINDOW_BUFFER_MINUTES = 10
 _TRADE_DATES_CACHE: Dict[str, Any] = {"ts": 0.0, "dates": set()}
 
 
@@ -149,6 +150,26 @@ def is_trading_time(value: datetime | None = None) -> bool:
         return False
     t = dt.time()
     return any(start <= t <= end for start, end in TRADING_SESSIONS)
+
+
+def is_trading_window(value: datetime | None = None, buffer_minutes: int = DEFAULT_TRADING_WINDOW_BUFFER_MINUTES) -> bool:
+    """Return True on A-share trading days around each trading session."""
+    dt = _to_shanghai_datetime(value)
+    if not is_trading_day(dt):
+        return False
+
+    try:
+        buffer = max(0, int(buffer_minutes))
+    except Exception:
+        buffer = DEFAULT_TRADING_WINDOW_BUFFER_MINUTES
+
+    day = dt.date()
+    for start, end in TRADING_SESSIONS:
+        window_start = datetime.combine(day, start, tzinfo=SHANGHAI_TZ) - timedelta(minutes=buffer)
+        window_end = datetime.combine(day, end, tzinfo=SHANGHAI_TZ) + timedelta(minutes=buffer)
+        if window_start <= dt <= window_end:
+            return True
+    return False
 
 
 def apply_slippage(price: float, signal_type: str, trading_config: Dict[str, Any]) -> float:

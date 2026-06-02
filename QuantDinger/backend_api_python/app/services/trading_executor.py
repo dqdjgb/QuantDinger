@@ -3115,6 +3115,27 @@ class TradingExecutor:
                 )
                 return False
 
+            if is_cn_paper and not cn_paper.is_trading_time():
+                append_strategy_log(
+                    strategy_id,
+                    "info",
+                    f"Paper fill rejected: CNStock market is closed ({signal_type} {symbol})",
+                )
+                append_strategy_execution_event(
+                    strategy_id=strategy_id,
+                    event_type="signal_rejected",
+                    status="rejected",
+                    execution_mode=execution_mode,
+                    symbol=symbol,
+                    signal_type=sig,
+                    decision_source="market_rule",
+                    reason="cnstock_market_closed",
+                    price=float(current_price or 0.0),
+                    position_state=state,
+                    context={"timezone": "Asia/Shanghai"},
+                )
+                return False
+
             # 1.1 开仓 AI 过滤（仅 open_*）
             if sig in ("open_long", "open_short") and self._is_entry_ai_filter_enabled(ai_model_config=ai_model_config, trading_config=trading_config):
                 ok_ai, ai_info = self._entry_ai_filter_allows(

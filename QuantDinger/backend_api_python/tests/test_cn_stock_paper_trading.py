@@ -8,6 +8,12 @@ from app.services.trading_executor import TradingExecutor
 SH_TZ = timezone(timedelta(hours=8))
 
 
+def _mock_trade_dates(monkeypatch, dates):
+    cn_stock._TRADE_DATES_CACHE["ts"] = 0.0
+    cn_stock._TRADE_DATES_CACHE["dates"] = set()
+    monkeypatch.setattr(cn_stock, "_fetch_trade_dates_from_akshare", lambda: set(dates))
+
+
 def test_cnstock_buy_rounds_down_to_board_lots():
     fill = cn_stock.build_fill(
         signal_type="open_long",
@@ -79,18 +85,46 @@ def test_cnstock_slippage_moves_against_trade():
     assert round(sell.price, 4) == 9.99
 
 
-def test_cnstock_trading_time_allows_a_share_sessions():
+def test_cnstock_trading_time_allows_a_share_sessions(monkeypatch):
+    _mock_trade_dates(monkeypatch, {"2026-06-02"})
+
     assert cn_stock.is_trading_time(datetime(2026, 6, 2, 9, 30, tzinfo=SH_TZ)) is True
     assert cn_stock.is_trading_time(datetime(2026, 6, 2, 11, 30, tzinfo=SH_TZ)) is True
     assert cn_stock.is_trading_time(datetime(2026, 6, 2, 13, 0, tzinfo=SH_TZ)) is True
     assert cn_stock.is_trading_time(datetime(2026, 6, 2, 15, 0, tzinfo=SH_TZ)) is True
 
 
-def test_cnstock_trading_time_blocks_closed_periods():
+def test_cnstock_trading_time_blocks_closed_periods(monkeypatch):
+    _mock_trade_dates(monkeypatch, {"2026-06-02"})
+
     assert cn_stock.is_trading_time(datetime(2026, 6, 2, 9, 29, tzinfo=SH_TZ)) is False
     assert cn_stock.is_trading_time(datetime(2026, 6, 2, 11, 31, tzinfo=SH_TZ)) is False
     assert cn_stock.is_trading_time(datetime(2026, 6, 2, 15, 1, tzinfo=SH_TZ)) is False
     assert cn_stock.is_trading_time(datetime(2026, 6, 6, 10, 0, tzinfo=SH_TZ)) is False
+
+
+def test_cnstock_trading_time_blocks_weekday_not_in_trade_calendar(monkeypatch):
+    _mock_trade_dates(monkeypatch, {"2026-06-02"})
+
+    assert cn_stock.is_trading_time(datetime(2026, 10, 1, 10, 0, tzinfo=SH_TZ)) is False
+
+
+def test_cnstock_trading_calendar_uses_stale_cache_on_refresh_failure(monkeypatch):
+    cn_stock._TRADE_DATES_CACHE["ts"] = 1.0
+    cn_stock._TRADE_DATES_CACHE["dates"] = {"2026-06-02"}
+    monkeypatch.setattr(cn_stock, "_trade_calendar_cache_ttl_sec", lambda: 0)
+    monkeypatch.setattr(cn_stock, "_fetch_trade_dates_from_akshare", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+
+    assert cn_stock.is_trading_day(datetime(2026, 6, 2, 10, 0, tzinfo=SH_TZ)) is True
+
+
+def test_cnstock_trading_calendar_fails_closed_without_cache(monkeypatch):
+    cn_stock._TRADE_DATES_CACHE["ts"] = 0.0
+    cn_stock._TRADE_DATES_CACHE["dates"] = set()
+    monkeypatch.delenv("CNSTOCK_TRADE_CALENDAR_FALLBACK_WEEKDAY", raising=False)
+    monkeypatch.setattr(cn_stock, "_fetch_trade_dates_from_akshare", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
+
+    assert cn_stock.is_trading_day(datetime(2026, 6, 2, 10, 0, tzinfo=SH_TZ)) is False
 
 
 def test_cnstock_paper_strategy_rejects_when_market_closed(monkeypatch):

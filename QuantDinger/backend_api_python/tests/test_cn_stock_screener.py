@@ -1,5 +1,6 @@
 from app.services import cn_stock_screener as mod
 from app.services.cn_stock_screener import CNStockScreenerService
+from app.services.strategy import StrategyService
 
 
 class _FakeCursor:
@@ -269,6 +270,28 @@ def test_create_paper_strategies_derives_capital_allocation_from_pool(monkeypatc
     assert payload["trading_config"]["capital_allocation_pct"] == 0.2
 
 
+def test_create_paper_strategies_defaults_to_auto_position_sizing(monkeypatch):
+    monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
+    strategy_service = _FakeStrategyService()
+    service = CNStockScreenerService(
+        kline_service=_FakeKline({}),
+        strategy_service=strategy_service,
+    )
+
+    service.create_paper_strategies(
+        user_id=7,
+        items=[{"symbol": "600519"}],
+        strategy_name="auto size",
+        initial_capital=20000,
+        trading_config={},
+    )
+
+    payload = strategy_service.payload
+    assert payload["trading_config"]["position_sizing_mode"] == "auto"
+    assert "entry_pct" not in payload["trading_config"]
+    assert "position_pct" not in payload["trading_config"]
+
+
 def test_create_paper_strategies_does_not_force_minimum_position_pct(monkeypatch):
     monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
     strategy_service = _FakeStrategyService()
@@ -292,3 +315,65 @@ def test_create_paper_strategies_does_not_force_minimum_position_pct(monkeypatch
     assert payload["trading_config"]["entry_pct"] == 0.25
     assert payload["trading_config"]["position_pct"] == 0.25
     assert payload["trading_config"]["max_position_pct"] == 8
+
+
+def test_create_paper_strategies_accepts_symbol_position_overrides(monkeypatch):
+    monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
+    strategy_service = _FakeStrategyService()
+    service = CNStockScreenerService(
+        kline_service=_FakeKline({}),
+        strategy_service=strategy_service,
+    )
+
+    service.create_paper_strategies(
+        user_id=7,
+        items=[
+            {"symbol": "600519", "position_pct": 5},
+            {"symbol": "000001", "trading_config": {"entry_pct": 12, "max_position_pct": 30}},
+        ],
+        strategy_name="symbol override",
+        initial_capital=20000,
+        trading_config={},
+    )
+
+    symbol_configs = strategy_service.payload["trading_config"]["symbol_trading_configs"]
+    assert symbol_configs["600519"]["entry_pct"] == 5
+    assert symbol_configs["600519"]["position_pct"] == 5
+    assert symbol_configs["000001"]["entry_pct"] == 12
+    assert symbol_configs["000001"]["max_position_pct"] == 30
+
+
+def test_strategy_batch_create_applies_symbol_trading_config_overrides(monkeypatch):
+    service = StrategyService()
+    created_payloads = []
+
+    def fake_create_strategy(payload):
+        created_payloads.append(payload)
+        return len(created_payloads)
+
+    monkeypatch.setattr(service, "create_strategy", fake_create_strategy)
+
+    result = service.batch_create_strategies({
+        "user_id": 7,
+        "strategy_name": "batch",
+        "strategy_type": "IndicatorStrategy",
+        "market_category": "CNStock",
+        "execution_mode": "paper",
+        "symbols": ["CNStock:600519", "CNStock:000001"],
+        "trading_config": {
+            "market_type": "spot",
+            "trade_direction": "long",
+            "position_sizing_mode": "auto",
+            "symbol_trading_configs": {
+                "600519": {"position_sizing_mode": "fixed_pct", "entry_pct": 5, "position_pct": 5},
+                "000001": {"position_sizing_mode": "fixed_pct", "entry_pct": 12, "position_pct": 12},
+            },
+        },
+    })
+
+    assert result["created_ids"] == [1, 2]
+    assert created_payloads[0]["trading_config"]["symbol"] == "600519"
+    assert created_payloads[0]["trading_config"]["entry_pct"] == 5
+    assert created_payloads[1]["trading_config"]["symbol"] == "000001"
+    assert created_payloads[1]["trading_config"]["entry_pct"] == 12
+    assert "symbol_trading_configs" not in created_payloads[0]["trading_config"]

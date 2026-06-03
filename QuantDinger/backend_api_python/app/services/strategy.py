@@ -1244,6 +1244,15 @@ class StrategyService:
                 
                 # Update symbol in trading_config
                 trading_config = dict(single_payload.get('trading_config') or {})
+                symbol_trading_configs = trading_config.pop('symbol_trading_configs', None)
+                if isinstance(symbol_trading_configs, dict):
+                    symbol_override = (
+                        symbol_trading_configs.get(str(symbol_name))
+                        or symbol_trading_configs.get(str(symbol))
+                        or symbol_trading_configs.get(f"{market_category}:{symbol_name}")
+                    )
+                    if isinstance(symbol_override, dict):
+                        trading_config.update(symbol_override)
                 trading_config['symbol'] = symbol_name
                 if trading_config.get('capital_allocation_pct') is not None:
                     try:

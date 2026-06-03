@@ -50,6 +50,10 @@ def _bounded_float(value: Any, default: float, low: float, high: float) -> float
     return float(_clamp(_to_float(value, default), low, high))
 
 
+def _has_value(value: Any) -> bool:
+    return value is not None and value != ""
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         if value is None:
@@ -719,7 +723,9 @@ output = {
         )
         normalized_capital = max(100.0, _to_float(incoming_tc.get("initial_capital"), initial_capital or 10000))
         normalized_interval = max(60, int(_to_float(incoming_tc.get("decide_interval"), decide_interval or 300)))
-        position_pct = _bounded_float(incoming_tc.get("position_pct"), 20.0, 0.0, 100.0)
+        position_pct_value = incoming_tc.get("position_pct", incoming_tc.get("entry_pct"))
+        has_fixed_position_pct = _has_value(position_pct_value)
+        position_pct = _bounded_float(position_pct_value, 0.0, 0.0, 100.0) if has_fixed_position_pct else None
         max_position_pct = _bounded_float(incoming_tc.get("max_position_pct"), 100.0, 0.0, 100.0)
         take_profit_pct = _bounded_float(incoming_tc.get("take_profit_pct"), 8.0, 0.0, 100.0)
         stop_loss_pct = _bounded_float(incoming_tc.get("stop_loss_pct"), 4.0, 0.0, 100.0)
@@ -741,8 +747,7 @@ output = {
             "leverage": 1,
             "market_type": "spot",
             "trade_direction": "long",
-            "entry_pct": position_pct,
-            "position_pct": position_pct,
+            "position_sizing_mode": "fixed_pct" if has_fixed_position_pct else "auto",
             "max_position_pct": max_position_pct,
             "take_profit_pct": take_profit_pct,
             "stop_loss_pct": stop_loss_pct,
@@ -755,8 +760,37 @@ output = {
             "paper_source": "cn_stock_screener",
             "strategy_template": strategy_template,
         }
+        if has_fixed_position_pct:
+            payload_trading_config["entry_pct"] = position_pct
+            payload_trading_config["position_pct"] = position_pct
+
+        symbol_trading_configs = {}
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            symbol = _normalize_symbol(item.get("symbol"))
+            if not symbol:
+                continue
+            raw_item_tc = item.get("trading_config") if isinstance(item.get("trading_config"), dict) else {}
+            item_tc = {}
+            item_position_value = raw_item_tc.get(
+                "position_pct",
+                raw_item_tc.get("entry_pct", item.get("position_pct", item.get("entry_pct"))),
+            )
+            if _has_value(item_position_value):
+                item_pct = _bounded_float(item_position_value, 0.0, 0.0, 100.0)
+                item_tc["position_sizing_mode"] = "fixed_pct"
+                item_tc["entry_pct"] = item_pct
+                item_tc["position_pct"] = item_pct
+            item_max_position_value = raw_item_tc.get("max_position_pct", item.get("max_position_pct"))
+            if _has_value(item_max_position_value):
+                item_tc["max_position_pct"] = _bounded_float(item_max_position_value, max_position_pct, 0.0, 100.0)
+            if item_tc:
+                symbol_trading_configs[symbol] = item_tc
         if capital_allocation_pct is not None and capital_allocation_pct != "":
             payload_trading_config["capital_allocation_pct"] = capital_allocation_pct
+        if symbol_trading_configs:
+            payload_trading_config["symbol_trading_configs"] = symbol_trading_configs
 
         payload = {
             "user_id": int(user_id),

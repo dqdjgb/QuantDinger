@@ -120,18 +120,21 @@
       </div>
       <div class="summary-item">
         <span class="label">{{ $t('trading-bot.grid.totalInvest') }}</span>
-        <span class="value">${{ totalInvestment }}</span>
+        <span class="value">{{ totalInvestment }}</span>
       </div>
     </div>
   </a-form-model>
 </template>
 
 <script>
+import { formatMarketMoney } from '@/utils/marketCurrency'
+
 export default {
   name: 'GridConfig',
   props: {
     value: { type: Object, default: () => ({}) },
     initialCapital: { type: Number, default: null },
+    marketCategory: { type: String, default: 'Crypto' },
     marketType: { type: String, default: 'swap' }
   },
   data () {
@@ -201,11 +204,11 @@ export default {
         return `${((ratio - 1) * 100).toFixed(2)}%`
       }
       const spacing = ((this.form.upperPrice - this.form.lowerPrice) / this.form.gridCount).toFixed(4)
-      return `$${spacing}`
+      return this.formatMoney(spacing, { minimumFractionDigits: 4, maximumFractionDigits: 4 })
     },
     totalInvestment () {
-      if (!this.form.amountPerGrid || !this.form.gridCount) return '0'
-      return (this.form.amountPerGrid * this.form.gridCount).toLocaleString('en-US', { minimumFractionDigits: 2 })
+      if (!this.form.amountPerGrid || !this.form.gridCount) return this.formatMoney(0)
+      return this.formatMoney(this.form.amountPerGrid * this.form.gridCount)
     },
     directionHint () {
       if (this.isSpotMarket) return 'Spot grid only supports long mode.'
@@ -223,6 +226,13 @@ export default {
     }
   },
   methods: {
+    formatMoney (value, options = {}) {
+      return formatMarketMoney(value, this.marketCategory, {
+        marketType: this.marketType,
+        accountCurrency: true,
+        ...options
+      })
+    },
     toWaterfallPctUi (raw, defaultPct) {
       if (raw == null || raw === '') return defaultPct
       const n = Number(raw)

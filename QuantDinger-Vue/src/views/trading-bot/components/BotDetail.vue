@@ -111,7 +111,7 @@
                 </div>
                 <div class="param-item">
                   <span class="param-label">{{ capitalLabel }}</span>
-                  <span class="param-value highlight">{{ formatNum(tc.initial_capital) }} USDT</span>
+                  <span class="param-value highlight">{{ formatBotMoney(tc.initial_capital) }}</span>
                 </div>
                 <div class="param-item" v-if="tc.order_mode">
                   <span class="param-label">{{ $t('trading-bot.grid.orderType') }}</span>
@@ -171,7 +171,7 @@
               </div>
               <div class="grid-overview__item">
                 <span class="ov-label">{{ $t('trading-bot.grid.amountPerGrid') }}</span>
-                <span class="ov-value">{{ formatNum(gp.amountPerGrid) }} USDT</span>
+                <span class="ov-value">{{ formatBotMoney(gp.amountPerGrid) }}</span>
               </div>
               <div class="grid-overview__item">
                 <span class="ov-label">{{ $t('trading-bot.grid.gridSpacing') }}</span>
@@ -179,11 +179,11 @@
               </div>
               <div class="grid-overview__item">
                 <span class="ov-label">{{ $t('trading-bot.grid.totalInvest') }}</span>
-                <span class="ov-value highlight">{{ formatNum(gp.amountPerGrid * gp.gridCount) }} USDT</span>
+                <span class="ov-value highlight">{{ formatBotMoney(gp.amountPerGrid * gp.gridCount) }}</span>
               </div>
               <div class="grid-overview__item">
                 <span class="ov-label">{{ $t('trading-bot.detail.gridProfitPerGrid') }}</span>
-                <span class="ov-value highlight">~{{ formatUsdt(avgGridProfitUsdt) }} USDT</span>
+                <span class="ov-value highlight">~{{ formatBotMoney(avgGridProfitUsdt) }}</span>
               </div>
               <div class="grid-overview__item">
                 <span class="ov-label">{{ $t('trading-bot.detail.gridProfitPct') }}</span>
@@ -215,7 +215,7 @@
                       → {{ formatPrice(o.targetPrice) }}
                     </div>
                     <div class="grid-order-item__profit" v-if="o.profitUsdt > 0">
-                      +{{ formatUsdt(o.profitUsdt) }}
+                      +{{ formatBotMoney(o.profitUsdt) }}
                     </div>
                   </div>
                   <div v-if="!longOrders.length" class="grid-orders-col__empty">-</div>
@@ -248,7 +248,7 @@
                       → {{ formatPrice(o.targetPrice) }}
                     </div>
                     <div class="grid-order-item__profit" v-if="o.profitUsdt > 0">
-                      +{{ formatUsdt(o.profitUsdt) }}
+                      +{{ formatBotMoney(o.profitUsdt) }}
                     </div>
                   </div>
                   <div v-if="!shortOrders.length" class="grid-orders-col__empty">-</div>
@@ -326,6 +326,7 @@ import PositionRecords from '@/views/trading-assistant/components/PositionRecord
 import PerformanceAnalysis from '@/views/trading-assistant/components/PerformanceAnalysis.vue'
 import StrategyLogs from '@/views/trading-assistant/components/StrategyLogs.vue'
 import request from '@/utils/request'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 const TYPE_META = {
   grid: { icon: 'bar-chart', gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' },
@@ -435,8 +436,8 @@ export default {
       const fallback = []
       if (!this.isMartingaleBot && this.tc.stop_loss_pct) fallback.push({ key: 'stopLossPct', label: this.$t('trading-bot.risk.stopLossPct'), value: `${this.tc.stop_loss_pct}%` })
       if (!this.isMartingaleBot && this.tc.take_profit_pct) fallback.push({ key: 'takeProfitPct', label: this.$t('trading-bot.risk.takeProfitPct'), value: `${this.tc.take_profit_pct}%` })
-      if (!this.isMartingaleBot && this.tc.max_position) fallback.push({ key: 'maxPosition', label: this.$t('trading-bot.risk.maxPosition'), value: `${this.formatNum(this.tc.max_position)} USDT` })
-      if (this.tc.max_daily_loss) fallback.push({ key: 'maxDailyLoss', label: this.isMartingaleBot ? this.$t('trading-bot.martingale.maxDailyLossAdvanced') : this.$t('trading-bot.risk.maxDailyLoss'), value: `${this.formatNum(this.tc.max_daily_loss)} USDT` })
+      if (!this.isMartingaleBot && this.tc.max_position) fallback.push({ key: 'maxPosition', label: this.$t('trading-bot.risk.maxPosition'), value: this.formatBotMoney(this.tc.max_position) })
+      if (this.tc.max_daily_loss) fallback.push({ key: 'maxDailyLoss', label: this.isMartingaleBot ? this.$t('trading-bot.martingale.maxDailyLossAdvanced') : this.$t('trading-bot.risk.maxDailyLoss'), value: this.formatBotMoney(this.tc.max_daily_loss) })
       return fallback
     },
     isGridBot () { return (this.bot?.bot_type || this.tc.bot_type) === 'grid' },
@@ -560,7 +561,7 @@ export default {
       if (valueType === 'enum' && item?.value_key) return this.$t(item.value_key)
       if (valueType === 'bool') return value ? this.$t('trading-bot.common.enabled') : this.$t('trading-bot.common.disabled')
       if (valueType === 'percent') return `${this.formatNum(value)}%`
-      if (valueType === 'usdt') return `${this.formatNum(value)} USDT`
+      if (valueType === 'usdt') return this.formatBotMoney(value)
       if (valueType === 'number' && typeof value === 'number') return this.formatNum(value)
       return String(value)
     },
@@ -576,10 +577,13 @@ export default {
       return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     formatUsdt (v) {
-      const n = parseFloat(v)
-      if (isNaN(n)) return '0.00'
-      if (Math.abs(n) < 0.01) return n.toFixed(4)
-      return n.toFixed(2)
+      return this.formatBotMoney(v)
+    },
+    formatBotMoney (v) {
+      return formatMarketMoney(v, this.bot && this.bot.market_category, {
+        marketType: this.tc && this.tc.market_type,
+        accountCurrency: true
+      })
     },
     formatPrice (v) {
       if (v === null || v === undefined) return '-'
@@ -641,7 +645,7 @@ export default {
         return `${this.formatNum(val)}%`
       }
       if (['initialAmount', 'amountEach', 'amountPerGrid', 'referencePrice', 'totalBudget'].includes(key)) {
-        return `${this.formatNum(val)} USDT`
+        return this.formatBotMoney(val)
       }
       if (typeof val === 'number') return this.formatNum(val)
       return String(val)

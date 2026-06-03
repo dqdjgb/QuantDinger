@@ -575,8 +575,8 @@
                                   :precision="2"
                                   size="small"
                                   style="width: 100%"
-                                  :formatter="v => `$ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')"
-                                  :parser="v => v.replace(/\$\s?|(,*)/g, '')"
+                                  :formatter="formatCapitalInput"
+                                  :parser="parseCapitalInput"
                                 />
                               </a-col>
                               <a-col :span="12">
@@ -1506,6 +1506,7 @@ import BacktestHistoryDrawer from '@/views/indicator-analysis/components/Backtes
 import QuickTradePanel from '@/components/QuickTradePanel/QuickTradePanel'
 import { Modal } from 'ant-design-vue'
 import message from 'ant-design-vue/es/message'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 const TF_MAX_DAYS = {
   '1m': 30,
@@ -4665,7 +4666,7 @@ export default {
           axisLabel: {
             color: dk ? 'rgba(255,255,255,0.35)' : '#999',
             fontSize: 11,
-            formatter: v => '$' + (v / 1000).toFixed(1) + 'k'
+            formatter: v => this.fmtCompactMoney(v)
           },
           splitLine: { lineStyle: { color: dk ? 'rgba(255,255,255,0.06)' : '#f0f0f0', type: 'dashed' } }
         },
@@ -5152,13 +5153,30 @@ export default {
       return (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%'
     },
     fmtMoney (v) {
-      if (v == null || isNaN(v)) return '$0.00'
-      const abs = Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-      return (v >= 0 ? '' : '-') + '$' + abs
+      return formatMarketMoney(v, this.market, { fallback: formatMarketMoney(0, this.market) })
+    },
+    formatCapitalInput (v) {
+      if (v === undefined || v === null || v === '') return ''
+      return formatMarketMoney(v, this.market, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2
+      })
+    },
+    parseCapitalInput (v) {
+      return String(v || '').replace(/[^\d.-]/g, '')
     },
     fmtMoney2 (v) {
       if (v == null || isNaN(v)) return '0.00'
       return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    },
+    fmtCompactMoney (v) {
+      const num = Number(v)
+      if (!Number.isFinite(num)) return formatMarketMoney(0, this.market)
+      const compact = num / 1000
+      return formatMarketMoney(compact, this.market, {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1
+      }) + 'k'
     },
     fmtElapsed (s) {
       return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`

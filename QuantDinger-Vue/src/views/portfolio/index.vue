@@ -8,13 +8,10 @@
         </div>
         <div class="card-content">
           <div class="card-label">{{ $t('portfolio.summary.totalValue') }}</div>
-          <div class="card-value">
-            <span class="currency">$</span>
-            <span class="amount">{{ formatNumber(summary.total_market_value) }}</span>
-          </div>
+          <div class="card-value">{{ formatPortfolioMoney(summary.total_market_value) }}</div>
           <div class="card-sub" v-if="summary.today_change !== undefined">
             <span :class="summary.today_change >= 0 ? 'positive' : 'negative'">
-              {{ $t('portfolio.summary.today') }}: {{ summary.today_change >= 0 ? '+' : '' }}${{ formatNumber(summary.today_change) }}
+              {{ $t('portfolio.summary.today') }}: {{ formatPortfolioMoney(summary.today_change, { signed: true }) }}
             </span>
           </div>
         </div>
@@ -26,7 +23,7 @@
         </div>
         <div class="card-content">
           <div class="card-label">{{ $t('portfolio.summary.totalCost') }}</div>
-          <div class="card-value">${{ formatNumber(summary.total_cost) }}</div>
+          <div class="card-value">{{ formatPortfolioMoney(summary.total_cost) }}</div>
         </div>
       </div>
 
@@ -37,7 +34,7 @@
         <div class="card-content">
           <div class="card-label">{{ $t('portfolio.summary.totalPnl') }}</div>
           <div class="card-value" :class="summary.total_pnl >= 0 ? 'positive' : 'negative'">
-            {{ summary.total_pnl >= 0 ? '+' : '' }}${{ formatNumber(summary.total_pnl) }}
+            {{ formatPortfolioMoney(summary.total_pnl, { signed: true }) }}
             <span class="percent">({{ summary.total_pnl_percent >= 0 ? '+' : '' }}{{ summary.total_pnl_percent }}%)</span>
           </div>
         </div>
@@ -71,7 +68,7 @@
         <div class="card-content">
           <div class="card-label">{{ $t('portfolio.summary.todayPnl') }}</div>
           <div class="card-value" :class="summary.today_pnl >= 0 ? 'positive' : 'negative'">
-            {{ summary.today_pnl >= 0 ? '+' : '' }}${{ formatNumber(summary.today_pnl || 0) }}
+            {{ formatPortfolioMoney(summary.today_pnl || 0, { signed: true }) }}
           </div>
         </div>
       </div>
@@ -274,7 +271,7 @@
                       <span class="group-stats">
                         <span class="count">{{ ungroupedPositions.length }} {{ $t('portfolio.positions.items') }}</span>
                         <span class="group-pnl" :class="getGroupPnl(ungroupedPositions) >= 0 ? 'positive' : 'negative'">
-                          {{ getGroupPnl(ungroupedPositions) >= 0 ? '+' : '' }}${{ formatNumber(getGroupPnl(ungroupedPositions)) }}
+                          {{ formatGroupMoney(ungroupedPositions, getGroupPnl(ungroupedPositions), { signed: true }) }}
                         </span>
                       </span>
                     </div>
@@ -332,7 +329,7 @@
                       <span class="group-stats">
                         <span class="count">{{ group.positions.length }} {{ $t('portfolio.positions.items') }}</span>
                         <span class="group-pnl" :class="getGroupPnl(group.positions) >= 0 ? 'positive' : 'negative'">
-                          {{ getGroupPnl(group.positions) >= 0 ? '+' : '' }}${{ formatNumber(getGroupPnl(group.positions)) }}
+                          {{ formatGroupMoney(group.positions, getGroupPnl(group.positions), { signed: true }) }}
                         </span>
                       </span>
                     </div>
@@ -638,7 +635,7 @@
             />
             <div class="current-price-info" v-if="alertPosition">
               <span class="label">{{ $t('portfolio.alerts.currentPrice') }}:</span>
-              <span class="price">${{ formatNumber(alertPosition.current_price || alertPosition.entry_price) }}</span>
+              <span class="price">{{ formatPositionMoney(alertPosition, alertPosition.current_price || alertPosition.entry_price) }}</span>
             </div>
           </div>
         </a-form-item>
@@ -678,10 +675,10 @@
               :precision="alertTypeIsPrice ? 4 : 2"
             />
             <span class="alert-unit" v-if="!alertTypeIsPrice">%</span>
-            <span class="alert-unit" v-else>$</span>
+            <span class="alert-unit" v-else>{{ getCurrencySymbol(alertPosition && alertPosition.market) }}</span>
           </div>
           <div class="threshold-hint" v-if="alertPosition && alertTypeIsPrice">
-            {{ $t('portfolio.alerts.currentPriceHint') }}: ${{ formatNumber(alertPosition.current_price || alertPosition.entry_price) }}
+            {{ $t('portfolio.alerts.currentPriceHint') }}: {{ formatPositionMoney(alertPosition, alertPosition.current_price || alertPosition.entry_price) }}
           </div>
         </a-form-item>
 
@@ -893,6 +890,7 @@ import {
   searchSymbols, getMarketTypes
 } from '@/api/portfolio'
 import { getNotificationSettings } from '@/api/user'
+import { formatMarketMoney, getMarketCurrency } from '@/utils/marketCurrency'
 
 export default {
   name: 'Portfolio',
@@ -1748,8 +1746,31 @@ export default {
       return this.$t(`dashboard.analysis.market.${market}`) || market
     },
     getCurrencySymbol (market) {
-      const dollarMarkets = ['USStock', 'Crypto', 'Forex', 'Futures']
-      return dollarMarkets.includes(market) ? '$' : '¥'
+      if (!market) return ''
+      return getMarketCurrency(market).symbol
+    },
+    inferPortfolioMarket () {
+      const markets = Array.from(new Set((this.positions || []).map(p => p && p.market).filter(Boolean)))
+      return markets.length === 1 ? markets[0] : null
+    },
+    formatPortfolioMoney (value, options = {}) {
+      const market = this.inferPortfolioMarket()
+      if (market) return formatMarketMoney(value, market, options)
+      const num = Number(value || 0)
+      const sign = options.signed && num > 0 ? '+' : (num < 0 ? '-' : '')
+      const abs = Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return `${sign}${abs}`
+    },
+    formatGroupMoney (positions, value, options = {}) {
+      const markets = Array.from(new Set((positions || []).map(p => p && p.market).filter(Boolean)))
+      if (markets.length === 1) return formatMarketMoney(value, markets[0], options)
+      const num = Number(value || 0)
+      const sign = options.signed && num > 0 ? '+' : (num < 0 ? '-' : '')
+      const abs = Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return `${sign}${abs}`
+    },
+    formatPositionMoney (position, value, options = {}) {
+      return formatMarketMoney(value, position && position.market, options)
     },
     formatNumber (num, digits = 2) {
       if (num === undefined || num === null) return '0.00'

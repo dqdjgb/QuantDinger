@@ -757,7 +757,7 @@ class="analyze-button">
               </template>
               <template slot="description">
                 <div style="color: #666; font-size: 12px;">
-                  <span v-if="item.price">${{ formatNumber(item.price) }}</span>
+                  <span v-if="item.price">{{ formatHistoryPrice(item) }}</span>
                   <span v-if="item.summary" style="margin-left: 8px;">{{ item.summary.substring(0, 80) }}{{ item.summary.length > 80 ? '...' : '' }}</span>
                 </div>
                 <div v-if="item.created_at" style="color: #999; font-size: 12px; margin-top: 4px;">
@@ -782,6 +782,7 @@ import { fastAnalyze, getAllAnalysisHistory, deleteAnalysisHistory } from '@/api
 import { getMarketSentiment, getMarketOverview, getMarketHeatmap, getEconomicCalendar } from '@/api/global-market'
 import FastAnalysisReport from './components/FastAnalysisReport.vue'
 import sessionCache from '@/utils/sessionCache'
+import { formatMarketMoney, getMarketCurrency } from '@/utils/marketCurrency'
 
 // Cache keys + TTLs for the four "market overview" widgets. Numbers picked
 // from the natural update cadence of each upstream:
@@ -1775,10 +1776,26 @@ export default {
     },
     formatHeatmapPrice (price) {
       if (!price) return ''
-      if (price >= 10000) return '$' + (price / 1000).toFixed(1) + 'K'
-      if (price >= 1000) return '$' + price.toFixed(0)
-      if (price >= 1) return '$' + price.toFixed(2)
-      return '$' + price.toFixed(4)
+      const market = ['Crypto', 'CNStock', 'HKStock', 'USStock', 'Forex', 'Futures'].includes(this.selectedMarketTab)
+        ? this.selectedMarketTab
+        : 'USStock'
+      const num = Number(price)
+      if (!Number.isFinite(num)) return ''
+      if (num >= 10000) {
+        return formatMarketMoney(num / 1000, market, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'K'
+      }
+      if (num >= 1000) {
+        return formatMarketMoney(num, market, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+      }
+      if (num >= 1) {
+        return formatMarketMoney(num, market, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      }
+      return formatMarketMoney(num, market, { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+    },
+    formatHistoryPrice (item) {
+      const num = Number(item && item.price)
+      if (!Number.isFinite(num)) return ''
+      return formatMarketMoney(num, item.market || this.selectedMarketTab || 'USStock')
     },
     getHeatmapName (item) {
       // sectors, commodities, forex 都需要多语言适配
@@ -1802,7 +1819,7 @@ export default {
       return colors[market] || 'default'
     },
     getCurrencySymbol (market) {
-      return '$'
+      return getMarketCurrency(market).symbol
     },
     formatCreditNum (n) {
       if (n === undefined || n === null || n === '') return '--'

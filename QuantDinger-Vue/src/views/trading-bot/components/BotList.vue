@@ -44,7 +44,7 @@
             </div>
           </div>
           <div class="bot-pnl" :class="{ positive: (item.unrealized_pnl || 0) >= 0, negative: (item.unrealized_pnl || 0) < 0 }">
-            {{ (item.unrealized_pnl || 0) >= 0 ? '+' : '' }}${{ (item.unrealized_pnl || 0).toFixed(2) }}
+            {{ formatBotMoney(item.unrealized_pnl || 0, item, { signed: true }) }}
           </div>
           <div class="bot-status-badge">
             <span :class="['dot', item.status || 'stopped']"></span>
@@ -92,6 +92,8 @@
 </template>
 
 <script>
+import { formatMarketMoney } from '@/utils/marketCurrency'
+
 const TYPE_META = {
   grid: { icon: 'bar-chart', gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' },
   martingale: { icon: 'fall', gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)' },
@@ -165,7 +167,14 @@ export default {
       if (val === null || val === undefined || val === '') return ''
       const n = Number(val)
       if (!Number.isFinite(n)) return ''
-      return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`
+      return this.formatBotMoney(n, item)
+    },
+    formatBotMoney (value, item, options = {}) {
+      return formatMarketMoney(value, item && item.market_category, {
+        marketType: item && item.market_type,
+        accountCurrency: true,
+        ...options
+      })
     }
   }
 }

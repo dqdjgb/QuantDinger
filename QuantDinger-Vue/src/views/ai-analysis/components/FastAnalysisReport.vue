@@ -169,7 +169,7 @@
       <div class="price-info-row" :class="{ 'hold-mode': isHoldDecision }">
         <div class="price-card current">
           <div class="price-label">{{ $t('fastAnalysis.currentPrice') }}</div>
-          <div class="price-value">${{ formatPrice(result.market_data?.current_price) }}</div>
+          <div class="price-value">{{ formatMoneyPrice(result.market_data?.current_price) }}</div>
           <div class="price-change" :class="result.market_data?.change_24h >= 0 ? 'positive' : 'negative'">
             {{ result.market_data?.change_24h >= 0 ? '+' : '' }}{{ formatNumber(result.market_data?.change_24h, 2) }}%
           </div>
@@ -177,11 +177,11 @@
         <template v-if="!isHoldDecision">
           <div class="price-card entry">
             <div class="price-label">{{ $t('fastAnalysis.entryPrice') }}</div>
-            <div class="price-value">${{ formatPrice(tradingPlan.entry_price) }}</div>
+            <div class="price-value">{{ formatMoneyPrice(tradingPlan.entry_price) }}</div>
           </div>
           <div class="price-card stop">
             <div class="price-label">{{ $t('fastAnalysis.stopLoss') }}</div>
-            <div class="price-value negative">${{ formatPrice(tradingPlan.stop_loss) }}</div>
+            <div class="price-value negative">{{ formatMoneyPrice(tradingPlan.stop_loss) }}</div>
             <div class="price-hint">
               <a-tooltip :title="stopLossHintText">
                 <a-icon type="info-circle" /> {{ $t('fastAnalysis.atrBased') }}
@@ -190,7 +190,7 @@
           </div>
           <div class="price-card target">
             <div class="price-label">{{ $t('fastAnalysis.takeProfit') }}</div>
-            <div class="price-value positive">${{ formatPrice(tradingPlan.take_profit) }}</div>
+            <div class="price-value positive">{{ formatMoneyPrice(tradingPlan.take_profit) }}</div>
             <div class="price-hint">
               <a-tooltip :title="takeProfitHintText">
                 <a-icon type="info-circle" /> {{ $t('fastAnalysis.atrBased') }}
@@ -411,7 +411,7 @@
               <div class="indicator-item" v-if="result.indicators.volatility && result.indicators.volatility.atr != null">
                 <div class="indicator-name">ATR (14)</div>
                 <div class="indicator-value" :class="getVolatilityClass(result.indicators.volatility.level)">
-                  ${{ formatPrice(result.indicators.volatility.atr) }}
+                  {{ formatMoneyPrice(result.indicators.volatility.atr) }}
                 </div>
                 <div class="indicator-signal">{{ $t('fastAnalysis.atrTrueRange') }}</div>
               </div>
@@ -434,11 +434,11 @@
               </div>
               <div class="indicator-item" v-if="result.indicators.levels">
                 <div class="indicator-name">{{ $t('fastAnalysis.support') }}</div>
-                <div class="indicator-value">${{ formatPrice(result.indicators.levels.support) }}</div>
+                <div class="indicator-value">{{ formatMoneyPrice(result.indicators.levels.support) }}</div>
               </div>
               <div class="indicator-item" v-if="result.indicators.levels">
                 <div class="indicator-name">{{ $t('fastAnalysis.resistance') }}</div>
-                <div class="indicator-value">${{ formatPrice(result.indicators.levels.resistance) }}</div>
+                <div class="indicator-value">{{ formatMoneyPrice(result.indicators.levels.resistance) }}</div>
               </div>
               <div class="indicator-item" v-if="result.indicators.volatility">
                 <div class="indicator-name">{{ $t('fastAnalysis.volatility') }}</div>
@@ -508,6 +508,7 @@
 <script>
 import { mapState } from 'vuex'
 import { submitFeedback as submitFeedbackApi, getPerformanceStats } from '@/api/fast-analysis'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 export default {
   name: 'FastAnalysisReport',
@@ -687,29 +688,29 @@ export default {
       }
 
       const ma = ind.moving_averages || {}
-      if (ma.ma5 != null) add('ma5', this.$t('fastAnalysis.ma5Label'), '$' + this.formatPrice(ma.ma5))
-      if (ma.ma10 != null) add('ma10', this.$t('fastAnalysis.ma10Label'), '$' + this.formatPrice(ma.ma10))
-      if (ma.ma20 != null) add('ma20', this.$t('fastAnalysis.ma20Label'), '$' + this.formatPrice(ma.ma20))
+      if (ma.ma5 != null) add('ma5', this.$t('fastAnalysis.ma5Label'), this.formatMoneyPrice(ma.ma5))
+      if (ma.ma10 != null) add('ma10', this.$t('fastAnalysis.ma10Label'), this.formatMoneyPrice(ma.ma10))
+      if (ma.ma20 != null) add('ma20', this.$t('fastAnalysis.ma20Label'), this.formatMoneyPrice(ma.ma20))
 
       const bb = ind.bollinger || {}
-      if (bb.BB_upper != null) add('bb_u', this.$t('fastAnalysis.bbUpper'), '$' + this.formatPrice(bb.BB_upper))
-      if (bb.BB_middle != null) add('bb_m', this.$t('fastAnalysis.bbMiddle'), '$' + this.formatPrice(bb.BB_middle))
-      if (bb.BB_lower != null) add('bb_l', this.$t('fastAnalysis.bbLower'), '$' + this.formatPrice(bb.BB_lower))
+      if (bb.BB_upper != null) add('bb_u', this.$t('fastAnalysis.bbUpper'), this.formatMoneyPrice(bb.BB_upper))
+      if (bb.BB_middle != null) add('bb_m', this.$t('fastAnalysis.bbMiddle'), this.formatMoneyPrice(bb.BB_middle))
+      if (bb.BB_lower != null) add('bb_l', this.$t('fastAnalysis.bbLower'), this.formatMoneyPrice(bb.BB_lower))
       if (bb.BB_width != null) add('bb_w', this.$t('fastAnalysis.bbWidthPct'), this.formatNumber(bb.BB_width, 2) + '%')
 
       const lv = ind.levels || {}
-      if (lv.pivot != null) add('piv', this.$t('fastAnalysis.pivotStd'), '$' + this.formatPrice(lv.pivot))
-      if (lv.s1 != null) add('s1', this.$t('fastAnalysis.levelS1'), '$' + this.formatPrice(lv.s1))
-      if (lv.r1 != null) add('r1', this.$t('fastAnalysis.levelR1'), '$' + this.formatPrice(lv.r1))
-      if (lv.s2 != null) add('s2', this.$t('fastAnalysis.levelS2'), '$' + this.formatPrice(lv.s2))
-      if (lv.r2 != null) add('r2', this.$t('fastAnalysis.levelR2'), '$' + this.formatPrice(lv.r2))
-      if (lv.swing_high != null) add('sw_h', this.$t('fastAnalysis.swingHigh20'), '$' + this.formatPrice(lv.swing_high))
-      if (lv.swing_low != null) add('sw_l', this.$t('fastAnalysis.swingLow20'), '$' + this.formatPrice(lv.swing_low))
+      if (lv.pivot != null) add('piv', this.$t('fastAnalysis.pivotStd'), this.formatMoneyPrice(lv.pivot))
+      if (lv.s1 != null) add('s1', this.$t('fastAnalysis.levelS1'), this.formatMoneyPrice(lv.s1))
+      if (lv.r1 != null) add('r1', this.$t('fastAnalysis.levelR1'), this.formatMoneyPrice(lv.r1))
+      if (lv.s2 != null) add('s2', this.$t('fastAnalysis.levelS2'), this.formatMoneyPrice(lv.s2))
+      if (lv.r2 != null) add('r2', this.$t('fastAnalysis.levelR2'), this.formatMoneyPrice(lv.r2))
+      if (lv.swing_high != null) add('sw_h', this.$t('fastAnalysis.swingHigh20'), this.formatMoneyPrice(lv.swing_high))
+      if (lv.swing_low != null) add('sw_l', this.$t('fastAnalysis.swingLow20'), this.formatMoneyPrice(lv.swing_low))
 
       const vol = ind.volatility || {}
       if (vol.atr != null) {
         const pct = vol.pct != null ? this.formatNumber(vol.pct, 2) + '% ATR/Price' : ''
-        add('atr14', this.$t('fastAnalysis.atr14Label'), '$' + this.formatPrice(vol.atr) + (pct ? ' · ' + pct : ''))
+        add('atr14', this.$t('fastAnalysis.atr14Label'), this.formatMoneyPrice(vol.atr) + (pct ? ' · ' + pct : ''))
       }
 
       const tl = ind.trading_levels || {}
@@ -718,7 +719,7 @@ export default {
       }
 
       if (ind.current_price != null) {
-        add('cref', this.$t('fastAnalysis.refClose'), '$' + this.formatPrice(ind.current_price))
+        add('cref', this.$t('fastAnalysis.refClose'), this.formatMoneyPrice(ind.current_price))
       }
 
       return rows
@@ -855,6 +856,16 @@ export default {
       if (num < 100) return num.toFixed(4)
       if (num < 10000) return num.toFixed(2)
       return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    },
+    formatMoneyPrice (value) {
+      const num = Number(value)
+      if (!Number.isFinite(num)) return '--'
+      const market = this.result && this.result.market
+      const max = Math.abs(num) < 1 ? 6 : (Math.abs(num) < 100 ? 4 : 2)
+      return formatMarketMoney(num, market, {
+        minimumFractionDigits: max,
+        maximumFractionDigits: max
+      })
     },
     formatNumber (value, decimals = 2) {
       if (value === undefined || value === null) return '--'

@@ -2780,13 +2780,12 @@ export default {
       return `${(n * 100).toFixed(2)}%`
     },
     formatCapitalPoolMoney (value) {
-      const n = Number(value || 0)
-      return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      return formatMarketMoney(value, this.selectedMarketCategory, { fallback: '-' })
     },
     formatAllocationPreview (pctValue) {
       const total = Number(this.capitalPool.strategy_total_capital || 0)
       const pct = Number(pctValue || 0) / 100
-      if (!total || !pct) return '$0.00'
+      if (!total || !pct) return formatMarketMoney(0, this.selectedMarketCategory, { fallback: '-' })
       return this.formatCapitalPoolMoney(total * pct)
     },
     openCapitalPoolModal () {

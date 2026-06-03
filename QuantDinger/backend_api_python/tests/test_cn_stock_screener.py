@@ -163,7 +163,8 @@ def test_strategy_feedback_is_neutral_when_absent():
     assert item["strategy_feedback"]["trade_count"] == 0
 
 
-def test_create_paper_strategies_forces_cnstock_paper_payload():
+def test_create_paper_strategies_forces_cnstock_paper_payload(monkeypatch):
+    monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
     strategy_service = _FakeStrategyService()
     service = CNStockScreenerService(
         kline_service=_FakeKline({}),
@@ -186,3 +187,48 @@ def test_create_paper_strategies_forces_cnstock_paper_payload():
     assert payload["trading_config"]["market_type"] == "spot"
     assert payload["trading_config"]["trade_direction"] == "long"
     assert payload["trading_config"]["initial_capital"] == 20000
+
+
+def test_create_paper_strategies_derives_capital_allocation_from_pool(monkeypatch):
+    monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
+    strategy_service = _FakeStrategyService()
+    service = CNStockScreenerService(
+        kline_service=_FakeKline({}),
+        strategy_service=strategy_service,
+    )
+
+    service.create_paper_strategies(
+        user_id=7,
+        items=[{"symbol": "600519"}, {"symbol": "000001"}],
+        strategy_name="筛选策略",
+        initial_capital=20000,
+    )
+
+    payload = strategy_service.payload
+    assert payload["trading_config"]["initial_capital"] == 20000
+    assert payload["trading_config"]["capital_allocation_pct"] == 0.2
+
+
+def test_create_paper_strategies_does_not_force_minimum_position_pct(monkeypatch):
+    monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
+    strategy_service = _FakeStrategyService()
+    service = CNStockScreenerService(
+        kline_service=_FakeKline({}),
+        strategy_service=strategy_service,
+    )
+
+    service.create_paper_strategies(
+        user_id=7,
+        items=[{"symbol": "600519"}],
+        strategy_name="low size",
+        initial_capital=20000,
+        trading_config={
+            "position_pct": 0.25,
+            "max_position_pct": 8,
+        },
+    )
+
+    payload = strategy_service.payload
+    assert payload["trading_config"]["entry_pct"] == 0.25
+    assert payload["trading_config"]["position_pct"] == 0.25
+    assert payload["trading_config"]["max_position_pct"] == 8

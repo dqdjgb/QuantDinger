@@ -3395,6 +3395,16 @@ class TradingExecutor:
             current_notional = self._current_position_value(current_positions, current_price)
             current_budget_used = current_notional if market_type == 'spot' else (current_notional / max(float(leverage or 1), 1.0))
             allocation_remaining = max(0.0, allocation_capital - current_budget_used)
+            max_position_budget_remaining = allocation_remaining
+            max_position_pct = self._to_ratio((trading_config or {}).get("max_position_pct"), default=1.0)
+            if 0 < max_position_pct < 1.0:
+                max_position_notional = allocation_capital * max_position_pct
+                max_position_remaining = max(0.0, max_position_notional - current_notional)
+                max_position_budget_remaining = (
+                    max_position_remaining
+                    if market_type == 'spot'
+                    else max_position_remaining / max(float(leverage or 1), 1.0)
+                )
             
             amount = 0.0
 
@@ -3404,21 +3414,23 @@ class TradingExecutor:
             # Frontend position sizing alignment:
             # - non-bot open_* uses entry_pct from trading_config if provided
             # - bot scripts pass their own amount/ratio from ctx.buy()/ctx.sell()
+            has_explicit_entry_pct = False
             if (not is_bot_script) and sig in ("open_long", "open_short") and isinstance(trading_config, dict):
                 ep = trading_config.get("entry_pct")
                 if ep is not None:
+                    has_explicit_entry_pct = True
                     position_size = self._to_ratio(ep, default=position_size if position_size is not None else 0.0)
 
             # Open / add sizing
             if ('open' in sig or 'add' in sig):
-                 if position_size is None or float(position_size) <= 0:
+                 if position_size is None or (float(position_size) <= 0 and not has_explicit_entry_pct):
                      position_size = 0.05
 
                  if is_bot_script and float(position_size) > 1.0:
                      # Bot scripts pass amount as absolute USDT notional, not ratio.
-                     usdt_notional = min(float(position_size), allocation_remaining)
+                     usdt_notional = min(float(position_size), allocation_remaining, max_position_budget_remaining)
                      if usdt_notional <= 0:
-                         append_strategy_log(strategy_id, "info", "Risk: strategy capital allocation exhausted; blocking entry")
+                         append_strategy_log(strategy_id, "info", "Risk: strategy capital allocation or max position exhausted; blocking entry")
                          return False
                      if market_type == 'spot':
                          amount = usdt_notional / current_price
@@ -3426,9 +3438,24 @@ class TradingExecutor:
                          amount = (usdt_notional * leverage) / current_price
                  else:
                      position_ratio = self._to_ratio(position_size, default=0.05)
-                     order_budget = min(available_capital * position_ratio, allocation_remaining)
+                     if position_ratio <= 0:
+                         append_strategy_execution_event(
+                             strategy_id=strategy_id,
+                             event_type="signal_rejected",
+                             status="rejected",
+                             execution_mode=execution_mode,
+                             symbol=symbol,
+                             signal_type=signal_type,
+                             decision_source="sizing",
+                             reason="non_positive_order_amount",
+                             price=float(current_price or 0.0),
+                             amount=0.0,
+                             position_state=state,
+                         )
+                         return False
+                     order_budget = min(available_capital * position_ratio, allocation_remaining, max_position_budget_remaining)
                      if order_budget <= 0:
-                         append_strategy_log(strategy_id, "info", "Risk: strategy capital allocation exhausted; blocking entry")
+                         append_strategy_log(strategy_id, "info", "Risk: strategy capital allocation or max position exhausted; blocking entry")
                          return False
                      if market_type == 'spot':
                          amount = order_budget / current_price

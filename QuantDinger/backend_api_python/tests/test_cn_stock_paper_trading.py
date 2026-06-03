@@ -178,6 +178,87 @@ def test_cnstock_paper_strategy_rejects_when_market_closed(monkeypatch):
     assert any("market is closed" in args[2] for args in logs)
 
 
+def test_cnstock_paper_strategy_caps_entry_by_max_position_pct(monkeypatch):
+    executor = object.__new__(TradingExecutor)
+    executor._exchange_fee_cache = {}
+    orders = []
+    logs = []
+
+    monkeypatch.setattr(trading_executor_module.cn_paper, "is_trading_time", lambda: True)
+    monkeypatch.setattr(executor, "_position_state", lambda positions: "long")
+    monkeypatch.setattr(executor, "_is_signal_allowed", lambda state, signal_type: True)
+    monkeypatch.setattr(executor, "_calculate_current_equity", lambda *args, **kwargs: 10000)
+    monkeypatch.setattr(executor, "_record_trade", lambda *args, **kwargs: None)
+    monkeypatch.setattr(executor, "_update_position", lambda *args, **kwargs: None)
+    monkeypatch.setattr(trading_executor_module, "append_strategy_log", lambda *args: logs.append(args))
+    monkeypatch.setattr(trading_executor_module, "append_strategy_execution_event", lambda **kwargs: None)
+
+    def fake_execute_exchange_order(**kwargs):
+        orders.append(kwargs)
+        return {"success": True, "pending_order_id": 99}
+
+    monkeypatch.setattr(executor, "_execute_exchange_order", fake_execute_exchange_order)
+
+    accepted = executor._execute_signal(
+        strategy_id=1,
+        strategy_name="cn-test",
+        exchange=None,
+        symbol="603618",
+        current_price=10.0,
+        signal_type="add_long",
+        position_size=0.5,
+        current_positions=[{"side": "long", "size": 100, "entry_price": 10.0}],
+        trade_direction="long",
+        leverage=1,
+        initial_capital=10000,
+        market_type="spot",
+        market_category="CNStock",
+        execution_mode="paper",
+        trading_config={"max_position_pct": 20},
+    )
+
+    assert accepted is True
+    assert orders[-1]["amount"] == 100
+
+
+def test_cnstock_paper_strategy_respects_explicit_zero_entry_pct(monkeypatch):
+    executor = object.__new__(TradingExecutor)
+    events = []
+    logs = []
+
+    monkeypatch.setattr(trading_executor_module.cn_paper, "is_trading_time", lambda: True)
+    monkeypatch.setattr(executor, "_position_state", lambda positions: "flat")
+    monkeypatch.setattr(executor, "_is_signal_allowed", lambda state, signal_type: True)
+    monkeypatch.setattr(executor, "_calculate_current_equity", lambda *args, **kwargs: 10000)
+    monkeypatch.setattr(trading_executor_module, "append_strategy_log", lambda *args: logs.append(args))
+    monkeypatch.setattr(
+        trading_executor_module,
+        "append_strategy_execution_event",
+        lambda **kwargs: events.append(kwargs),
+    )
+
+    accepted = executor._execute_signal(
+        strategy_id=1,
+        strategy_name="cn-test",
+        exchange=None,
+        symbol="603618",
+        current_price=10.0,
+        signal_type="open_long",
+        position_size=0.2,
+        current_positions=[],
+        trade_direction="long",
+        leverage=1,
+        initial_capital=10000,
+        market_type="spot",
+        market_category="CNStock",
+        execution_mode="paper",
+        trading_config={"entry_pct": 0},
+    )
+
+    assert accepted is False
+    assert events[-1]["reason"] == "non_positive_order_amount"
+
+
 def test_cnstock_strategy_tick_skips_outside_trading_window(monkeypatch):
     monkeypatch.setattr(trading_executor_module.cn_paper, "is_trading_window", lambda buffer_minutes=10: False)
 

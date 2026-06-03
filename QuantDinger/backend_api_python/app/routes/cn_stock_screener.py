@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 cn_stock_screener_bp = Blueprint("cn_stock_screener", __name__)
 SYNC_CANDIDATE_MAX = 20
-SYNC_AI_MAX_TOP_N = 0
+SYNC_AI_MAX_TOP_N = 5
 SYNC_ENRICHMENT_MAX_TOP_N = 3
 
 
@@ -48,8 +48,8 @@ def run_screener():
                 _int_payload(data, "enrichment_top_n", SYNC_ENRICHMENT_MAX_TOP_N),
                 SYNC_ENRICHMENT_MAX_TOP_N,
             )
-        requested_ai_top_n = _int_payload(data, "ai_top_n", 0)
-        sync_ai = bool(data.get("sync_ai", False))
+        requested_ai_top_n = max(0, _int_payload(data, "ai_top_n", 0))
+        sync_ai = bool(data.get("sync_ai", True))
         ai_top_n = min(requested_ai_top_n, SYNC_AI_MAX_TOP_N) if sync_ai else 0
         requested_candidate_limit = _int_payload(data, "candidate_limit", 80)
         candidate_limit = min(requested_candidate_limit, SYNC_CANDIDATE_MAX)

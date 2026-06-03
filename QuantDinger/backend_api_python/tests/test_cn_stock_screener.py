@@ -70,6 +70,21 @@ class _FakeStrategyService:
         }
 
 
+class _FakeScreenerRouteService:
+    def __init__(self):
+        self.kwargs = None
+
+    def run(self, **kwargs):
+        self.kwargs = kwargs
+        return {
+            "market": "CNStock",
+            "candidate_count": 0,
+            "scored_count": 0,
+            "ai_analyzed_count": kwargs.get("ai_top_n"),
+            "items": [],
+        }
+
+
 def _klines(count=90, start=10.0, step=0.2, volume=1000.0):
     rows = []
     for idx in range(count):
@@ -148,6 +163,51 @@ def test_run_respects_zero_ai_top_n(monkeypatch):
     assert result["ai_analyzed_count"] == 0
     assert len(fake_ai.calls) == 0
     assert all(item["ai_decision"] is None for item in result["items"])
+
+
+def test_route_allows_requested_sync_ai_top_n_by_default(monkeypatch):
+    from flask import Flask, g
+    from app.routes import cn_stock_screener as route_mod
+
+    fake_service = _FakeScreenerRouteService()
+    monkeypatch.setattr(route_mod, "get_cn_stock_screener_service", lambda: fake_service)
+
+    app = Flask(__name__)
+    with app.test_request_context(
+        "/api/cn-stock-screener/run",
+        method="POST",
+        json={"ai_top_n": 5, "candidate_limit": 80, "top_n": 10},
+    ):
+        g.user_id = 7
+        response = route_mod.run_screener.__wrapped__()
+
+    payload = response.get_json()
+    assert payload["code"] == 1
+    assert fake_service.kwargs["candidate_limit"] == route_mod.SYNC_CANDIDATE_MAX
+    assert fake_service.kwargs["ai_top_n"] == 5
+    assert payload["data"]["sync_limits"]["effective_ai_top_n"] == 5
+
+
+def test_route_can_disable_sync_ai(monkeypatch):
+    from flask import Flask, g
+    from app.routes import cn_stock_screener as route_mod
+
+    fake_service = _FakeScreenerRouteService()
+    monkeypatch.setattr(route_mod, "get_cn_stock_screener_service", lambda: fake_service)
+
+    app = Flask(__name__)
+    with app.test_request_context(
+        "/api/cn-stock-screener/run",
+        method="POST",
+        json={"ai_top_n": 5, "sync_ai": False},
+    ):
+        g.user_id = 7
+        response = route_mod.run_screener.__wrapped__()
+
+    payload = response.get_json()
+    assert payload["code"] == 1
+    assert fake_service.kwargs["ai_top_n"] == 0
+    assert payload["data"]["sync_limits"]["effective_ai_top_n"] == 0
 
 
 def test_strategy_feedback_is_neutral_when_absent():

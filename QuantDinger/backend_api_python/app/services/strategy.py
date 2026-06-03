@@ -8,7 +8,7 @@ from datetime import datetime
 
 from app.utils.logger import get_logger
 from app.utils.db import get_db_connection
-from app.services.capital_pool import get_capital_pool_summary, resolve_strategy_allocation
+from app.services.capital_pool import get_capital_pool_summary, get_strategy_total_capital, resolve_strategy_allocation
 from app.services.symbol_name import normalize_crypto_symbol
 
 logger = get_logger(__name__)
@@ -696,6 +696,14 @@ class StrategyService:
     ) -> tuple[float, float, Dict[str, Any]]:
         if not isinstance(trading_config, dict):
             trading_config = {}
+        if trading_config.get('shared_capital_pool'):
+            total_capital = get_strategy_total_capital(int(user_id or 1))
+            if total_capital <= 0:
+                raise ValueError("Please set the strategy total capital before creating strategies")
+            trading_config['strategy_total_capital'] = total_capital
+            trading_config['initial_capital'] = total_capital
+            trading_config['capital_allocation_pct'] = 0.0
+            return total_capital, 0.0, trading_config
         total_capital, allocation_pct, allocated_capital = resolve_strategy_allocation(
             int(user_id or 1),
             trading_config,

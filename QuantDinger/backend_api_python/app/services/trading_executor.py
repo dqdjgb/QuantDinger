@@ -3384,27 +3384,39 @@ class TradingExecutor:
                 pool_total_capital = 0.0
             if pool_total_capital <= 0:
                 pool_total_capital = float(initial_capital or 0.0)
-            available_capital = self._calculate_current_equity(
-                strategy_id,
-                pool_total_capital,
-                current_positions=current_positions,
-                current_price=current_price,
-                symbol=symbol,
-            )
-            allocation_capital = max(0.0, float(initial_capital or 0.0))
-            current_notional = self._current_position_value(current_positions, current_price)
-            current_budget_used = current_notional if market_type == 'spot' else (current_notional / max(float(leverage or 1), 1.0))
-            allocation_remaining = max(0.0, allocation_capital - current_budget_used)
-            max_position_budget_remaining = allocation_remaining
-            max_position_pct = self._to_ratio((trading_config or {}).get("max_position_pct"), default=1.0)
-            if 0 < max_position_pct < 1.0:
-                max_position_notional = allocation_capital * max_position_pct
-                max_position_remaining = max(0.0, max_position_notional - current_notional)
-                max_position_budget_remaining = (
-                    max_position_remaining
-                    if market_type == 'spot'
-                    else max_position_remaining / max(float(leverage or 1), 1.0)
+            shared_capital_pool = bool((trading_config or {}).get("shared_capital_pool"))
+            if shared_capital_pool:
+                available_capital = self._calculate_shared_pool_available_capital(
+                    strategy_id=strategy_id,
+                    pool_total_capital=pool_total_capital,
+                    current_price=current_price,
+                    symbol=symbol,
                 )
+                allocation_capital = max(0.0, float(pool_total_capital or initial_capital or 0.0))
+                allocation_remaining = available_capital
+                max_position_budget_remaining = available_capital
+            else:
+                available_capital = self._calculate_current_equity(
+                    strategy_id,
+                    pool_total_capital,
+                    current_positions=current_positions,
+                    current_price=current_price,
+                    symbol=symbol,
+                )
+                allocation_capital = max(0.0, float(initial_capital or 0.0))
+                current_notional = self._current_position_value(current_positions, current_price)
+                current_budget_used = current_notional if market_type == 'spot' else (current_notional / max(float(leverage or 1), 1.0))
+                allocation_remaining = max(0.0, allocation_capital - current_budget_used)
+                max_position_budget_remaining = allocation_remaining
+                max_position_pct = self._to_ratio((trading_config or {}).get("max_position_pct"), default=1.0)
+                if 0 < max_position_pct < 1.0:
+                    max_position_notional = allocation_capital * max_position_pct
+                    max_position_remaining = max(0.0, max_position_notional - current_notional)
+                    max_position_budget_remaining = (
+                        max_position_remaining
+                        if market_type == 'spot'
+                        else max_position_remaining / max(float(leverage or 1), 1.0)
+                    )
             
             amount = 0.0
 
@@ -4422,6 +4434,87 @@ class TradingExecutor:
 
         equity = float(initial_capital or 0.0) + realized_pnl + unrealized_pnl
         return max(0.0, equity)
+
+    def _calculate_shared_pool_available_capital(
+        self,
+        *,
+        strategy_id: int,
+        pool_total_capital: float,
+        current_price: Optional[float] = None,
+        symbol: str = "",
+    ) -> float:
+        """Return remaining cash for CNStock screener strategies sharing one paper pool."""
+        total_capital = float(pool_total_capital or 0.0)
+        realized_pnl = 0.0
+        invested_notional = 0.0
+        normalized_symbol = (symbol or "").split(":")[0]
+        try:
+            with get_db_connection() as db:
+                cursor = db.cursor()
+                cursor.execute("SELECT user_id FROM qd_strategies_trading WHERE id = %s", (strategy_id,))
+                row = cursor.fetchone() or {}
+                user_id = int(row.get("user_id") or 1)
+                if total_capital <= 0:
+                    total_capital = get_strategy_total_capital(user_id)
+
+                shared_filter = """
+                    s.user_id = %s
+                    AND (
+                        s.trading_config LIKE %s
+                        OR s.trading_config LIKE %s
+                    )
+                """
+                shared_params = (
+                    user_id,
+                    '%"shared_capital_pool": true%',
+                    '%"shared_capital_pool":true%',
+                )
+                cursor.execute(
+                    f"""
+                    SELECT COALESCE(SUM(COALESCE(t.profit, 0) - COALESCE(t.commission, 0)), 0) AS realized_pnl
+                    FROM qd_strategy_trades t
+                    JOIN qd_strategies_trading s ON s.id = t.strategy_id
+                    WHERE {shared_filter}
+                    """,
+                    shared_params,
+                )
+                row = cursor.fetchone() or {}
+                realized_pnl = float(row.get("realized_pnl") or 0.0)
+
+                cursor.execute(
+                    f"""
+                    SELECT p.symbol, p.side, p.size, p.entry_price, p.current_price
+                    FROM qd_strategy_positions p
+                    JOIN qd_strategies_trading s ON s.id = p.strategy_id
+                    WHERE {shared_filter}
+                    """,
+                    shared_params,
+                )
+                rows = cursor.fetchall() or []
+                cursor.close()
+        except Exception as exc:
+            logger.warning(f"Failed to calculate shared pool capital for strategy {strategy_id}: {exc}")
+            return max(0.0, total_capital)
+
+        for pos in rows:
+            try:
+                side = str(pos.get("side") or "").strip().lower()
+                if side not in ("long", "short"):
+                    continue
+                size = float(pos.get("size") or 0.0)
+                if size <= 0:
+                    continue
+                mark = pos.get("current_price")
+                pos_symbol = str(pos.get("symbol") or "")
+                if current_price and normalized_symbol and pos_symbol.split(":")[0] == normalized_symbol:
+                    mark = current_price
+                mark = float(mark or pos.get("entry_price") or 0.0)
+                if mark > 0:
+                    invested_notional += size * mark
+            except Exception:
+                continue
+
+        return max(0.0, total_capital + realized_pnl - invested_notional)
 
     def _current_position_value(
         self,

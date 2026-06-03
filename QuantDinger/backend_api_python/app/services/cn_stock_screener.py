@@ -789,7 +789,8 @@ output = {
             strategy_template,
             indicator_params or incoming_tc.get("indicator_params") or {},
         )
-        normalized_capital = max(100.0, _to_float(incoming_tc.get("initial_capital"), initial_capital or 10000))
+        total_capital = get_strategy_total_capital(int(user_id))
+        normalized_capital = max(100.0, total_capital or _to_float(incoming_tc.get("initial_capital"), initial_capital or 10000))
         normalized_interval = max(60, int(_to_float(incoming_tc.get("decide_interval"), decide_interval or 300)))
         position_pct_value = incoming_tc.get("position_pct", incoming_tc.get("entry_pct"))
         has_fixed_position_pct = _has_value(position_pct_value)
@@ -802,21 +803,15 @@ output = {
         trailing_activation_pct = _bounded_float(incoming_tc.get("trailing_activation_pct"), 5.0, 0.0, 100.0)
         commission = _bounded_float(incoming_tc.get("commission"), 0.0003, 0.0, 0.1)
         slippage = _bounded_float(incoming_tc.get("slippage"), 0.0, 0.0, 0.1)
-        capital_allocation_pct = incoming_tc.get("capital_allocation_pct")
-        if capital_allocation_pct is None or capital_allocation_pct == "":
-            total_capital = get_strategy_total_capital(int(user_id))
-            if total_capital > 0:
-                capital_allocation_pct = normalized_capital / total_capital
-
         base_name = (strategy_name or "").strip() or "A股选股模拟策略"
         payload_trading_config = {
             "timeframe": timeframe,
             "initial_capital": normalized_capital,
+            "shared_capital_pool": True,
             "leverage": 1,
             "market_type": "spot",
             "trade_direction": "long",
             "position_sizing_mode": "fixed_pct" if has_fixed_position_pct else "auto",
-            "max_position_pct": max_position_pct,
             "take_profit_pct": take_profit_pct,
             "stop_loss_pct": stop_loss_pct,
             "trailing_enabled": trailing_enabled,
@@ -855,8 +850,8 @@ output = {
                 item_tc["max_position_pct"] = _bounded_float(item_max_position_value, max_position_pct, 0.0, 100.0)
             if item_tc:
                 symbol_trading_configs[symbol] = item_tc
-        if capital_allocation_pct is not None and capital_allocation_pct != "":
-            payload_trading_config["capital_allocation_pct"] = capital_allocation_pct
+        if _has_value(incoming_tc.get("max_position_pct")):
+            payload_trading_config["max_position_pct"] = max_position_pct
         if symbol_trading_configs:
             payload_trading_config["symbol_trading_configs"] = symbol_trading_configs
 

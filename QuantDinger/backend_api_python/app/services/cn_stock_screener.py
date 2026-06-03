@@ -83,8 +83,14 @@ def _pct(current: float, base: float) -> float:
 
 def _normalize_symbol(symbol: str) -> str:
     s = (symbol or "").strip().upper()
+    if ":" in s:
+        s = s.split(":", 1)[1].strip()
     if "." in s and s.split(".", 1)[0].isdigit():
         s = s.split(".", 1)[0]
+    for prefix in ("SH", "SZ", "BJ"):
+        if s.startswith(prefix) and s[len(prefix):].isdigit():
+            s = s[len(prefix):]
+            break
     if s.isdigit() and len(s) < 6:
         s = s.zfill(6)
     return s

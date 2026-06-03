@@ -178,6 +178,7 @@
 
 <script>
 import { aiGenerateStrategy } from '@/api/strategy'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 const GRADIENTS = {
   grid: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -227,7 +228,11 @@ export default {
         map[this.$t('trading-bot.wizard.leverage')] = bc.leverage + 'x'
       }
       if (bc.initialCapital) {
-        map[this.$t('trading-bot.wizard.initialCapital')] = '$' + bc.initialCapital
+        map[this.$t('trading-bot.wizard.initialCapital')] = formatMarketMoney(
+          bc.initialCapital,
+          bc.marketCategory || bc.market_category || 'Crypto',
+          { marketType: bc.marketType || bc.market_type, accountCurrency: true }
+        )
       }
       return map
     }

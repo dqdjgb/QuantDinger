@@ -368,3 +368,7 @@ docker compose up -d
 - IBKR 和 MT5 依赖本地桌面/终端环境，云部署时通常应通过 `ALLOW_LOCAL_DESKTOP_BROKERS` 控制。
 - Agent Gateway 调用会审计，新增 Agent 能力时要考虑 scope、allowlist、rate limit 和 paper-only 保护。
 - 新增语言文案时要同步 `src/locales/lang/` 下所有语言，至少保证 key 不缺失。
+
+## 11. Market currency display
+
+Frontend market money display is centralized in `QuantDinger-Vue/src/utils/marketCurrency.js`. CNStock and Futures display as CNY/¥, HKStock as HKD/HK$, USStock and Forex as USD/$, and Crypto as USDT. Indicator IDE backtests, strategy capital allocation, manual portfolio positions, AI fast analysis, trading bot money fields, and portfolio price-alert notifications use the market currency helper so CNStock prices, costs, market value, P&L, initial capital, and buy amounts are displayed and interpreted as RMB.

@@ -29,15 +29,15 @@ _stop_event = threading.Event()
 # 多语言消息模板
 ALERT_MESSAGES = {
     'zh-CN': {
-        'price_above': '🔔 价格突破预警: {symbol} 当前价格 ${current_price:.4f} 已突破 ${threshold:.4f}',
-        'price_below': '🔔 价格跌破预警: {symbol} 当前价格 ${current_price:.4f} 已跌破 ${threshold:.4f}',
+        'price_above': '🔔 价格突破预警: {symbol} 当前价格 {currency_symbol}{current_price:.4f} 已突破 {currency_symbol}{threshold:.4f}',
+        'price_below': '🔔 价格跌破预警: {symbol} 当前价格 {currency_symbol}{current_price:.4f} 已跌破 {currency_symbol}{threshold:.4f}',
         'pnl_above': '🎉 盈利预警: {symbol} 当前盈亏 {pnl_percent:.1f}% 已达到 {threshold:.1f}% 目标',
         'pnl_below': '⚠️ 亏损预警: {symbol} 当前盈亏 {pnl_percent:.1f}% 已触及 {threshold:.1f}% 止损线',
         'alert_title': '价格/盈亏预警'
     },
     'en-US': {
-        'price_above': '🔔 Price Alert: {symbol} current price ${current_price:.4f} has exceeded ${threshold:.4f}',
-        'price_below': '🔔 Price Alert: {symbol} current price ${current_price:.4f} has dropped below ${threshold:.4f}',
+        'price_above': '🔔 Price Alert: {symbol} current price {currency_symbol}{current_price:.4f} has exceeded {currency_symbol}{threshold:.4f}',
+        'price_below': '🔔 Price Alert: {symbol} current price {currency_symbol}{current_price:.4f} has dropped below {currency_symbol}{threshold:.4f}',
         'pnl_above': '🎉 Profit Alert: {symbol} P&L {pnl_percent:.1f}% has reached {threshold:.1f}% target',
         'pnl_below': '⚠️ Loss Alert: {symbol} P&L {pnl_percent:.1f}% has hit {threshold:.1f}% stop-loss',
         'alert_title': 'Price/P&L Alert'
@@ -45,8 +45,45 @@ ALERT_MESSAGES = {
 }
 
 
+def _market_currency_symbol(market: str) -> str:
+    mapping = {
+        'CNStock': '\u00a5',
+        'Futures': '\u00a5',
+        'HKStock': 'HK$',
+        'Crypto': 'USDT ',
+        'USStock': '$',
+        'Forex': '$',
+    }
+    return mapping.get(str(market or '').strip(), '$')
+
+
+def _format_market_money(
+    value: Any,
+    market: str = '',
+    digits: int = 2,
+    signed: bool = False,
+) -> str:
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        number = 0.0
+    symbol = _market_currency_symbol(market)
+    sign = ''
+    if signed:
+        sign = '+' if number >= 0 else '-'
+    elif number < 0:
+        sign = '-'
+    return f"{sign}{symbol}{abs(number):,.{digits}f}"
+
+
+def _common_market(items: List[Dict[str, Any]]) -> str:
+    markets = {str(item.get('market') or '').strip() for item in items if item.get('market')}
+    return next(iter(markets)) if len(markets) == 1 else ''
+
+
 def _get_alert_message(alert_type: str, language: str = 'en-US', **kwargs) -> str:
     """Get localized alert message."""
+    kwargs.setdefault('currency_symbol', '$')
     lang = 'zh-CN' if language and language.startswith('zh') else 'en-US'
     templates = ALERT_MESSAGES.get(lang, ALERT_MESSAGES['en-US'])
     template = templates.get(alert_type, '')
@@ -594,6 +631,10 @@ def _build_html_report(
     # Build HTML
     pnl_class = 'positive' if total_pnl >= 0 else 'negative'
     pnl_sign = '+' if total_pnl >= 0 else ''
+    report_market = _common_market(positions)
+    total_market_value_text = _format_market_money(total_market_value, report_market)
+    total_cost_text = _format_market_money(total_cost, report_market)
+    total_pnl_text = _format_market_money(total_pnl, report_market, signed=True)
     
     html = f'''
     {css}
@@ -613,15 +654,15 @@ def _build_html_report(
                     </div>
                     <div class="qd-stat-card">
                         <div class="label">{texts['total_value']}</div>
-                        <div class="value">${total_market_value:,.2f}</div>
+                        <div class="value">{total_market_value_text}</div>
                     </div>
                     <div class="qd-stat-card">
                         <div class="label">{texts['total_cost']}</div>
-                        <div class="value">${total_cost:,.2f}</div>
+                        <div class="value">{total_cost_text}</div>
                     </div>
                     <div class="qd-stat-card">
                         <div class="label">{texts['total_pnl']}</div>
-                        <div class="value {pnl_class}">{pnl_sign}${total_pnl:,.2f}<span class="percent">({pnl_sign}{total_pnl_percent:.1f}%)</span></div>
+                        <div class="value {pnl_class}">{total_pnl_text}<span class="percent">({pnl_sign}{total_pnl_percent:.1f}%)</span></div>
                     </div>
                 </div>
             </div>
@@ -691,6 +732,9 @@ def _build_html_report(
         
         pnl_class = 'positive' if pnl >= 0 else 'negative'
         pnl_sign = '+' if pnl >= 0 else ''
+        current_price_text = _format_market_money(current_price, market, 4)
+        entry_price_text = _format_market_money(entry_price, market, 4)
+        pnl_text = _format_market_money(pnl, market, signed=True)
         
         reasoning = pa.get('reasoning', '')
         trader_reasoning = pa.get('trader_reasoning', '')
@@ -715,15 +759,15 @@ def _build_html_report(
                     <div class="qd-pos-stats">
                         <div class="stat">
                             <div class="label">{texts['current_price']}</div>
-                            <div class="value">${current_price:.4f}</div>
+                            <div class="value">{current_price_text}</div>
                         </div>
                         <div class="stat">
                             <div class="label">{texts['entry_price']}</div>
-                            <div class="value">${entry_price:.4f}</div>
+                            <div class="value">{entry_price_text}</div>
                         </div>
                         <div class="stat">
                             <div class="label">{texts['pnl']}</div>
-                            <div class="value {pnl_class}">{pnl_sign}${pnl:.2f} ({pnl_sign}{pnl_pct:.1f}%)</div>
+                            <div class="value {pnl_class}">{pnl_text} ({pnl_sign}{pnl_pct:.1f}%)</div>
                         </div>
                         <div class="stat">
                             <div class="label">{texts['quantity']} / {texts['side']}</div>
@@ -836,6 +880,9 @@ def _build_telegram_report(
     total_pnl = sum(float(p.get('pnl', 0)) for p in held)
     total_pnl_pct = round(total_pnl / total_cost * 100, 2) if total_cost > 0 else 0
     pnl_sign = '+' if total_pnl >= 0 else ''
+    report_market = _common_market(held)
+    total_cost_text = _format_market_money(total_cost, report_market)
+    total_pnl_text = _format_market_money(total_pnl, report_market, signed=True)
 
     buy_count = len([p for p in position_analyses if p.get('final_decision') == 'BUY'])
     sell_count = len([p for p in position_analyses if p.get('final_decision') == 'SELL'])
@@ -849,8 +896,8 @@ def _build_telegram_report(
         overview = ["<b>📈 概览</b>"]
         if held:
             overview.append(f"• 持仓: {len(held)} 个")
-            overview.append(f"• 总成本: ${total_cost:,.2f}")
-            overview.append(f"• 总盈亏: {pnl_sign}${total_pnl:,.2f} ({pnl_sign}{total_pnl_pct:.1f}%)")
+            overview.append(f"• 总成本: {total_cost_text}")
+            overview.append(f"• 总盈亏: {total_pnl_text} ({pnl_sign}{total_pnl_pct:.1f}%)")
         if watched:
             overview.append(f"• 观察: {len(watched)} 个")
         lines.extend(overview)
@@ -864,8 +911,8 @@ def _build_telegram_report(
         overview = ["<b>📈 Overview</b>"]
         if held:
             overview.append(f"• Holdings: {len(held)}")
-            overview.append(f"• Total Cost: ${total_cost:,.2f}")
-            overview.append(f"• Total P&L: {pnl_sign}${total_pnl:,.2f} ({pnl_sign}{total_pnl_pct:.1f}%)")
+            overview.append(f"• Total Cost: {total_cost_text}")
+            overview.append(f"• Total P&L: {total_pnl_text} ({pnl_sign}{total_pnl_pct:.1f}%)")
         if watched:
             overview.append(f"• Watchlist: {len(watched)}")
         lines.extend(overview)
@@ -888,11 +935,11 @@ def _build_telegram_report(
             pnl_pct = pa.get('pnl_percent', 0)
             ps = '+' if pnl >= 0 else ''
             lines.append(
-                f"   💰 ${pa.get('current_price', 0):,.2f} | "
-                f"{'盈亏' if is_zh else 'P&L'}: {ps}${pnl:,.2f} ({ps}{pnl_pct:.1f}%)"
+                f"   💰 {_format_market_money(pa.get('current_price', 0), pa.get('market'), 2)} | "
+                f"{'盈亏' if is_zh else 'P&L'}: {_format_market_money(pnl, pa.get('market'), signed=True)} ({ps}{pnl_pct:.1f}%)"
             )
         else:
-            lines.append(f"   💰 {'现价' if is_zh else 'Price'}: ${pa.get('current_price', 0):,.2f}")
+            lines.append(f"   💰 {'现价' if is_zh else 'Price'}: {_format_market_money(pa.get('current_price', 0), pa.get('market'), 2)}")
         lines.append(
             f"   🎯 {'建议' if is_zh else 'Rec'}: <b>{d_text}</b> "
             f"({'置信度' if is_zh else 'Conf'}: {pa.get('confidence', 50)}%)"
@@ -968,10 +1015,10 @@ def _build_batch_telegram_report(
                 pnl_s = '+' if pnl >= 0 else ''
                 pnl_pct = pa.get('pnl_percent', 0)
                 section_lines.append(
-                    f"   💰 ${cur_price:,.2f} | {'盈亏' if is_zh else 'P&L'}: {pnl_s}${pnl:,.2f} ({pnl_s}{pnl_pct:.1f}%)"
+                    f"   💰 {_format_market_money(cur_price, pa.get('market'), 2)} | {'盈亏' if is_zh else 'P&L'}: {_format_market_money(pnl, pa.get('market'), signed=True)} ({pnl_s}{pnl_pct:.1f}%)"
                 )
             else:
-                section_lines.append(f"   💰 {'现价' if is_zh else 'Price'}: ${cur_price:,.2f}")
+                section_lines.append(f"   💰 {'现价' if is_zh else 'Price'}: {_format_market_money(cur_price, pa.get('market'), 2)}")
             section_lines.append(
                 f"   🎯 {'建议' if is_zh else 'Rec'}: <b>{d_text}</b> "
                 f"({'置信度' if is_zh else 'Conf'}: {pa.get('confidence', 50)}%)"
@@ -987,6 +1034,9 @@ def _build_batch_telegram_report(
     total_pnl = sum(float(a.get('pnl', 0)) for a in held)
     total_pnl_pct = round(total_pnl / total_cost * 100, 2) if total_cost else 0
     pnl_sign = '+' if total_pnl >= 0 else ''
+    report_market = _common_market(held)
+    total_cost_text = _format_market_money(total_cost, report_market)
+    total_pnl_text = _format_market_money(total_pnl, report_market, signed=True)
     buy_c = len([a for a in all_analyses if a.get('final_decision') == 'BUY'])
     sell_c = len([a for a in all_analyses if a.get('final_decision') == 'SELL'])
     hold_c = len([a for a in all_analyses if a.get('final_decision') == 'HOLD'])
@@ -1000,7 +1050,7 @@ def _build_batch_telegram_report(
             f"• 标的数量: {len(all_analyses)} 个",
         ]
         if held:
-            header.append(f"• 持仓: {len(held)} 个 | 总成本: ${total_cost:,.2f} | 盈亏: {pnl_sign}${total_pnl:,.2f} ({pnl_sign}{total_pnl_pct:.1f}%)")
+            header.append(f"• 持仓: {len(held)} 个 | 总成本: {total_cost_text} | 盈亏: {total_pnl_text} ({pnl_sign}{total_pnl_pct:.1f}%)")
         if watched:
             header.append(f"• 观察: {len(watched)} 个")
         header.extend([
@@ -1017,7 +1067,7 @@ def _build_batch_telegram_report(
             f"• Symbols: {len(all_analyses)}",
         ]
         if held:
-            header.append(f"• Holdings: {len(held)} | Cost: ${total_cost:,.2f} | P&L: {pnl_sign}${total_pnl:,.2f} ({pnl_sign}{total_pnl_pct:.1f}%)")
+            header.append(f"• Holdings: {len(held)} | Cost: {total_cost_text} | P&L: {total_pnl_text} ({pnl_sign}{total_pnl_pct:.1f}%)")
         if watched:
             header.append(f"• Watchlist: {len(watched)}")
         header.extend([
@@ -1563,7 +1613,8 @@ def _check_position_alerts():
                         triggered = True
                         alert_message = _get_alert_message(
                             'price_above', alert_language,
-                            symbol=symbol, current_price=current_price, threshold=threshold
+                            symbol=symbol, current_price=current_price, threshold=threshold,
+                            currency_symbol=_market_currency_symbol(market)
                         )
                 
                 elif alert_type == 'price_below':
@@ -1571,7 +1622,8 @@ def _check_position_alerts():
                         triggered = True
                         alert_message = _get_alert_message(
                             'price_below', alert_language,
-                            symbol=symbol, current_price=current_price, threshold=threshold
+                            symbol=symbol, current_price=current_price, threshold=threshold,
+                            currency_symbol=_market_currency_symbol(market)
                         )
                 
                 elif alert_type in ('pnl_above', 'pnl_below'):

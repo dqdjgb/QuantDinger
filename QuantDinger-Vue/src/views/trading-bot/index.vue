@@ -126,6 +126,7 @@ import BotCreateWizard from './components/BotCreateWizard.vue'
 import BotList from './components/BotList.vue'
 import BotDetail from './components/BotDetail.vue'
 import AiBotDialog from './components/AiBotDialog.vue'
+import { formatMarketMoney } from '@/utils/marketCurrency'
 
 export default {
   name: 'TradingBot',
@@ -166,13 +167,13 @@ export default {
       return [
         {
           label: this.$t('trading-bot.kpi.totalEquity'),
-          value: '$' + totalEquity.toLocaleString('en-US', { minimumFractionDigits: 2 }),
+          value: this.formatBotMoney(totalEquity),
           icon: 'wallet',
           color: '#1890ff'
         },
         {
           label: this.$t('trading-bot.kpi.totalPnl'),
-          value: (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toLocaleString('en-US', { minimumFractionDigits: 2 }),
+          value: this.formatBotMoney(totalPnl, { signed: true }),
           icon: 'rise',
           color: totalPnl >= 0 ? '#52c41a' : '#f5222d'
         },
@@ -211,6 +212,18 @@ export default {
     }
   },
   methods: {
+    inferBotMarket () {
+      const markets = Array.from(new Set((this.bots || []).map(b => b && b.market_category).filter(Boolean)))
+      return markets.length === 1 ? markets[0] : null
+    },
+    formatBotMoney (value, options = {}) {
+      const market = this.inferBotMarket()
+      if (market) return formatMarketMoney(value, market, options)
+      const num = Number(value || 0)
+      const sign = options.signed && num > 0 ? '+' : (num < 0 ? '-' : '')
+      const abs = Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return `${sign}${abs}`
+    },
     async loadBots () {
       this.loading = true
       try {

@@ -193,7 +193,7 @@
               :parser="v => String(v || '').replace('%', '')"
               style="width: 100%"
             />
-            <div class="form-hint">分配资金：${{ baseForm.initialCapital }}</div>
+            <div class="form-hint">分配资金：{{ formatBaseMoney(baseForm.initialCapital) }}</div>
             <div v-if="botType === 'martingale'" class="form-hint">{{ martingaleBudgetHint }}</div>
           </a-form-model-item>
 
@@ -210,6 +210,7 @@
           ref="strategyConfig"
           v-model="strategyParams"
           :initialCapital="baseForm.initialCapital"
+          :marketCategory="baseForm.marketCategory"
           :marketType="baseForm.marketType"
         />
       </div>
@@ -253,7 +254,7 @@
                 :min="0"
                 :step="100"
                 style="width: 100%"
-                placeholder="USDT"
+                :placeholder="baseCurrencyLabel"
               />
               <div class="form-hint">{{ maxPositionHint }}</div>
             </a-form-model-item>
@@ -273,7 +274,7 @@
               :min="0"
               :step="10"
               style="width: 100%"
-              placeholder="USDT"
+              :placeholder="baseCurrencyLabel"
             />
             <div class="form-hint">{{ dailyLossHint }}</div>
           </a-form-model-item>
@@ -310,7 +311,7 @@
               {{ baseForm.leverage }}x
             </a-descriptions-item>
             <a-descriptions-item :label="capitalLabel">
-              ${{ baseForm.initialCapital }}
+              {{ formatBaseMoney(baseForm.initialCapital) }}
             </a-descriptions-item>
           </a-descriptions>
 
@@ -334,10 +335,10 @@
               {{ riskForm.takeProfitPct }}%
             </a-descriptions-item>
             <a-descriptions-item v-if="botType !== 'martingale'" :label="$t('trading-bot.risk.maxPosition')">
-              ${{ riskForm.maxPosition }}
+              {{ formatBaseMoney(riskForm.maxPosition) }}
             </a-descriptions-item>
             <a-descriptions-item :label="dailyLossLabel">
-              ${{ riskForm.maxDailyLoss }}
+              {{ formatBaseMoney(riskForm.maxDailyLoss) }}
             </a-descriptions-item>
           </a-descriptions>
 
@@ -446,6 +447,7 @@ import GridConfig from './configs/GridConfig.vue'
 import MartingaleConfig from './configs/MartingaleConfig.vue'
 import TrendConfig from './configs/TrendConfig.vue'
 import DCAConfig from './configs/DCAConfig.vue'
+import { formatMarketMoney, getMarketCurrencyLabel } from '@/utils/marketCurrency'
 
 const BOT_TYPE_MAP = {
   grid: {
@@ -716,6 +718,9 @@ export default {
     isZhLocale () {
       return String(this.$i18n?.locale || '').toLowerCase().startsWith('zh')
     },
+    baseCurrencyLabel () {
+      return getMarketCurrencyLabel(this.baseForm.marketCategory, this.baseForm.marketType)
+    },
     capitalLabel () {
       return this.botType === 'martingale'
         ? (this.isZhLocale ? '总投入金额' : 'Total Budget')
@@ -869,6 +874,13 @@ export default {
     syncAllocatedCapital () {
       this.baseForm.initialCapital = this.allocatedCapital
     },
+    formatBaseMoney (value) {
+      return formatMarketMoney(value, this.baseForm.marketCategory, {
+        marketType: this.baseForm.marketType,
+        accountCurrency: true,
+        fallback: '-'
+      })
+    },
     shouldShowStrategyParam (key) {
       if (key === 'referencePrice') return this.botType === 'grid'
       // Hide the trailing TP activation / callback details on the confirm
@@ -985,7 +997,7 @@ export default {
         'amountEach',
         'totalBudget'
       ].includes(key)) {
-        return `$${value}`
+        return this.formatBaseMoney(value)
       }
       return value
     },

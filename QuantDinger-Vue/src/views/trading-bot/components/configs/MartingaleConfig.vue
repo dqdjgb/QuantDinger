@@ -11,7 +11,7 @@
         :value="initialCapital"
         disabled
         style="width: 100%"
-        placeholder="USDT"
+        :placeholder="currencyPlaceholder"
       />
       <div class="capital-hint">{{ budgetHint }}</div>
     </a-form-model-item>
@@ -20,7 +20,7 @@
         :value="firstOrderAmount"
         disabled
         style="width: 100%"
-        placeholder="USDT"
+        :placeholder="currencyPlaceholder"
       />
       <div class="capital-hint">{{ firstOrderHint }}</div>
     </a-form-model-item>
@@ -139,26 +139,29 @@
     >
       <div class="summary-item">
         <span class="label">{{ budgetLabel }}</span>
-        <span class="value">${{ maxInvestment }}</span>
+        <span class="value">{{ maxInvestment }}</span>
       </div>
       <div class="summary-item">
         <span class="label">{{ firstOrderLabel }}</span>
-        <span class="value">${{ firstOrderAmount }}</span>
+        <span class="value">{{ firstOrderAmount }}</span>
       </div>
       <div class="summary-item">
         <span class="label">{{ $t('trading-bot.martingale.lastLayerAmt') }}</span>
-        <span class="value">${{ lastLayerAmount }}</span>
+        <span class="value">{{ lastLayerAmount }}</span>
       </div>
     </div>
   </a-form-model>
 </template>
 
 <script>
+import { formatMarketMoney, getMarketCurrencyLabel } from '@/utils/marketCurrency'
+
 export default {
   name: 'MartingaleConfig',
   props: {
     value: { type: Object, default: () => ({}) },
     initialCapital: { type: Number, default: null },
+    marketCategory: { type: String, default: 'Crypto' },
     marketType: { type: String, default: 'swap' }
   },
   data () {
@@ -253,6 +256,9 @@ export default {
     isSpotMarket () {
       return this.marketType === 'spot'
     },
+    currencyPlaceholder () {
+      return getMarketCurrencyLabel(this.marketCategory, this.marketType)
+    },
     budgetLabel () {
       return this.isZhLocale ? '总投入金额' : 'Total Budget'
     },
@@ -302,7 +308,7 @@ export default {
       return Math.max(0, Math.floor((capital / geoSum) * 100) / 100)
     },
     firstOrderAmount () {
-      return this.firstOrderRaw.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      return this.formatMoney(this.firstOrderRaw)
     },
     maxLayersHint () {
       return this.isZhLocale
@@ -316,11 +322,11 @@ export default {
         total += amt
         amt *= this.form.multiplier
       }
-      return total.toLocaleString('en-US', { minimumFractionDigits: 2 })
+      return this.formatMoney(total)
     },
     lastLayerAmount () {
       const amt = this.firstOrderRaw * Math.pow(this.form.multiplier, this.form.maxLayers - 1)
-      return amt.toLocaleString('en-US', { minimumFractionDigits: 2 })
+      return this.formatMoney(amt)
     },
     firstOrderHint () {
       return this.isZhLocale
@@ -350,6 +356,12 @@ export default {
     }
   },
   methods: {
+    formatMoney (value) {
+      return formatMarketMoney(value, this.marketCategory, {
+        marketType: this.marketType,
+        accountCurrency: true
+      })
+    },
     toWaterfallPctUi (raw, defaultPct) {
       if (raw == null || raw === '') return defaultPct
       const n = Number(raw)

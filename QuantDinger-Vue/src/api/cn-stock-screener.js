@@ -7,7 +7,15 @@ export function runCNStockScreener (data) {
     url: `${BASE_URL}/run`,
     method: 'post',
     data,
-    timeout: 300000
+    timeout: 30000
+  })
+}
+
+export function getCNStockScreenerJob (jobId) {
+  return request({
+    url: `${BASE_URL}/jobs/${jobId}`,
+    method: 'get',
+    timeout: 30000
   })
 }
 

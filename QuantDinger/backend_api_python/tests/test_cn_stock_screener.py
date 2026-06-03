@@ -71,21 +71,6 @@ class _FakeStrategyService:
         }
 
 
-class _FakeScreenerRouteService:
-    def __init__(self):
-        self.kwargs = None
-
-    def run(self, **kwargs):
-        self.kwargs = kwargs
-        return {
-            "market": "CNStock",
-            "candidate_count": 0,
-            "scored_count": 0,
-            "ai_analyzed_count": kwargs.get("ai_top_n"),
-            "items": [],
-        }
-
-
 def _klines(count=90, start=10.0, step=0.2, volume=1000.0):
     rows = []
     for idx in range(count):
@@ -166,12 +151,22 @@ def test_run_respects_zero_ai_top_n(monkeypatch):
     assert all(item["ai_decision"] is None for item in result["items"])
 
 
-def test_route_allows_requested_sync_ai_top_n_by_default(monkeypatch):
+def test_route_submits_async_job_with_requested_ai_top_n(monkeypatch):
     from flask import Flask, g
     from app.routes import cn_stock_screener as route_mod
 
-    fake_service = _FakeScreenerRouteService()
-    monkeypatch.setattr(route_mod, "get_cn_stock_screener_service", lambda: fake_service)
+    submitted = {}
+
+    def fake_submit_job(**kwargs):
+        submitted.update(kwargs)
+        return {
+            "job_id": "job123",
+            "status": "queued",
+            "kind": route_mod.JOB_KIND,
+            "created_at": "2026-06-03T00:00:00Z",
+        }
+
+    monkeypatch.setattr(route_mod, "submit_job", fake_submit_job)
 
     app = Flask(__name__)
     with app.test_request_context(
@@ -184,17 +179,31 @@ def test_route_allows_requested_sync_ai_top_n_by_default(monkeypatch):
 
     payload = response.get_json()
     assert payload["code"] == 1
-    assert fake_service.kwargs["candidate_limit"] == route_mod.SYNC_CANDIDATE_MAX
-    assert fake_service.kwargs["ai_top_n"] == 5
-    assert payload["data"]["sync_limits"]["effective_ai_top_n"] == 5
+    assert payload["msg"] == "submitted"
+    assert payload["data"]["job_id"] == "job123"
+    assert submitted["user_id"] == 7
+    assert submitted["kind"] == route_mod.JOB_KIND
+    assert submitted["request_payload"]["candidate_limit"] == route_mod.ASYNC_CANDIDATE_MAX
+    assert submitted["request_payload"]["ai_top_n"] == 5
+    assert payload["data"]["async_limits"]["effective_ai_top_n"] == 5
 
 
-def test_route_can_disable_sync_ai(monkeypatch):
+def test_route_can_disable_async_ai(monkeypatch):
     from flask import Flask, g
     from app.routes import cn_stock_screener as route_mod
 
-    fake_service = _FakeScreenerRouteService()
-    monkeypatch.setattr(route_mod, "get_cn_stock_screener_service", lambda: fake_service)
+    submitted = {}
+
+    def fake_submit_job(**kwargs):
+        submitted.update(kwargs)
+        return {
+            "job_id": "job123",
+            "status": "queued",
+            "kind": route_mod.JOB_KIND,
+            "created_at": "2026-06-03T00:00:00Z",
+        }
+
+    monkeypatch.setattr(route_mod, "submit_job", fake_submit_job)
 
     app = Flask(__name__)
     with app.test_request_context(
@@ -207,8 +216,36 @@ def test_route_can_disable_sync_ai(monkeypatch):
 
     payload = response.get_json()
     assert payload["code"] == 1
-    assert fake_service.kwargs["ai_top_n"] == 0
-    assert payload["data"]["sync_limits"]["effective_ai_top_n"] == 0
+    assert submitted["request_payload"]["ai_top_n"] == 0
+    assert payload["data"]["async_limits"]["effective_ai_top_n"] == 0
+
+
+def test_route_polls_async_screener_job(monkeypatch):
+    from flask import Flask, g
+    from app.routes import cn_stock_screener as route_mod
+
+    monkeypatch.setattr(route_mod, "get_job", lambda job_id, user_id: {
+        "job_id": job_id,
+        "user_id": user_id,
+        "kind": route_mod.JOB_KIND,
+        "status": "succeeded",
+        "progress": {"phase": "completed", "percent": 100},
+        "result": {"items": [{"symbol": "600519"}]},
+        "error": None,
+        "created_at": None,
+        "started_at": None,
+        "finished_at": None,
+    })
+
+    app = Flask(__name__)
+    with app.test_request_context("/api/cn-stock-screener/jobs/job123", method="GET"):
+        g.user_id = 7
+        response = route_mod.get_screener_job.__wrapped__("job123")
+
+    payload = response.get_json()
+    assert payload["code"] == 1
+    assert payload["data"]["status"] == "succeeded"
+    assert payload["data"]["result"]["items"][0]["symbol"] == "600519"
 
 
 def test_strategy_feedback_is_neutral_when_absent():

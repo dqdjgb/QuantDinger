@@ -93,6 +93,7 @@ def submit_job(
     results.  Each call is delivered to live SSE subscribers AND persisted on
     the job row so reconnecting clients can replay the latest snapshot.
     """
+    _ensure_agent_job_schema()
     job_id = _new_job_id()
     created_at = datetime.utcnow()
     with get_db_connection() as db:
@@ -194,6 +195,7 @@ def _publish_progress(job_id: str, event: dict, *, terminal: bool = False) -> No
     _job_signal(job_id).set()
     # Persist last snapshot so cold reconnects see something.
     try:
+        _ensure_agent_job_schema()
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
@@ -245,6 +247,7 @@ def _gc_job_state(job_id: str) -> None:
 
 
 def _set_status(job_id: str, status: str, *, started_at: Optional[datetime] = None) -> None:
+    _ensure_agent_job_schema()
     with get_db_connection() as db:
         cur = db.cursor()
         if started_at is not None:
@@ -262,6 +265,7 @@ def _set_status(job_id: str, status: str, *, started_at: Optional[datetime] = No
 
 
 def _set_result(job_id: str, result: Any) -> None:
+    _ensure_agent_job_schema()
     with get_db_connection() as db:
         cur = db.cursor()
         cur.execute(
@@ -277,6 +281,7 @@ def _set_result(job_id: str, result: Any) -> None:
 
 
 def _set_failure(job_id: str, error: str) -> None:
+    _ensure_agent_job_schema()
     with get_db_connection() as db:
         cur = db.cursor()
         cur.execute(
@@ -293,6 +298,7 @@ def _set_failure(job_id: str, error: str) -> None:
 
 def get_job(job_id: str, *, user_id: int) -> Optional[dict]:
     """Tenant-scoped job lookup."""
+    _ensure_agent_job_schema()
     with get_db_connection() as db:
         cur = db.cursor()
         cur.execute(
@@ -310,6 +316,7 @@ def get_job(job_id: str, *, user_id: int) -> Optional[dict]:
 
 
 def list_jobs(*, user_id: int, kind: Optional[str] = None, limit: int = 50) -> list[dict]:
+    _ensure_agent_job_schema()
     limit = max(1, min(int(limit or 50), 200))
     with get_db_connection() as db:
         cur = db.cursor()
@@ -336,3 +343,13 @@ def list_jobs(*, user_id: int, kind: Optional[str] = None, limit: int = 50) -> l
         rows = cur.fetchall()
         cur.close()
     return rows or []
+
+
+def _ensure_agent_job_schema() -> None:
+    """Materialize qd_agent_jobs for human routes that reuse the job runner."""
+    try:
+        from app.utils.agent_auth import _ensure_schema
+
+        _ensure_schema()
+    except Exception as exc:
+        logger.debug(f"agent_jobs: schema ensure failed: {exc}")

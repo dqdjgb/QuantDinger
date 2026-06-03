@@ -328,7 +328,7 @@ flowchart LR
 
 A 股筛选页批量创建的是 `CNStock` + `paper` + `spot` + `long` 的指标策略。默认使用自动买入比例，不向每只股票强制写入统一的 `entry_pct` / `position_pct`；如果用户关闭自动模式并填写默认买入比例，或单只股票条目携带自己的 `entry_pct` / `position_pct`，创建时才会写入固定比例。`max_position_pct` 是该策略分配资金内的最大持仓百分比。执行层始终按剩余分配资金、最大仓位和市场规则限制订单，A 股纸面成交规则在 `paper_trading/cn_stock.py` 统一处理，买入会按 100 股一手向下取整，不足 100 股会拒绝成交。
 
-A 股筛选同步接口 `/api/cn-stock-screener/run` 会限制候选打分数量以避免请求超时，并按表单的 `ai_top_n` 对 Top 股票执行 FastAnalysis AI 分析，当前同步 AI 上限为 5；如请求显式传入 `sync_ai=false`，则只返回规则筛选结果。
+A 股筛选接口 `/api/cn-stock-screener/run` 采用异步任务模式：提交后立即返回 `job_id`，前端通过 `/api/cn-stock-screener/jobs/<job_id>` 轮询任务状态、进度和最终结果。任务后台执行规则评分、可选增强数据和 FastAnalysis AI 分析；`candidate_limit`、`ai_top_n` 和 `enrichment_top_n` 仍按服务端上限约束，`sync_ai=false` 时只做规则筛选。
 
 ## 9. 测试与验证
 

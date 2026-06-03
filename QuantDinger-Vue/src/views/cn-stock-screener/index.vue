@@ -58,6 +58,13 @@
         show-icon
         :message="`${summary.skipped_count} 只股票因数据不足或源异常被跳过`"
       />
+      <a-alert
+        v-if="currentJobId && loading"
+        class="summary-alert"
+        type="info"
+        show-icon
+        :message="jobProgressText"
+      />
     </div>
 
     <div class="strategy-config">
@@ -257,7 +264,7 @@
 </template>
 
 <script>
-import { runCNStockScreener, createCNStockPaperStrategies } from '@/api/cn-stock-screener'
+import { runCNStockScreener, getCNStockScreenerJob, createCNStockPaperStrategies } from '@/api/cn-stock-screener'
 
 export default {
   name: 'CNStockScreener',
@@ -265,6 +272,10 @@ export default {
     return {
       loading: false,
       creating: false,
+      currentJobId: '',
+      pollTimer: null,
+      jobProgress: {},
+      jobStatus: '',
       items: [],
       summary: {},
       selectedRowKeys: [],
@@ -357,7 +368,29 @@ export default {
     detailTitle () {
       if (!this.activeItem) return '详情'
       return `${this.activeItem.symbol} ${this.activeItem.name || ''}`
+    },
+    jobProgressText () {
+      const progress = this.jobProgress || {}
+      const percent = Number(progress.percent || 0)
+      const phaseMap = {
+        running: '任务已开始',
+        loading_candidates: '加载候选股票',
+        loading_feedback: '读取策略反馈',
+        scoring: '规则评分中',
+        enrichment: '增强数据分析中',
+        ai_analysis: 'AI 分析中',
+        completed: '整理结果'
+      }
+      const phase = phaseMap[progress.phase] || '分析中'
+      const symbol = progress.current_symbol ? `：${progress.current_symbol}` : ''
+      const count = progress.processed_count !== undefined && progress.candidate_count
+        ? `（${progress.processed_count}/${progress.candidate_count}）`
+        : ''
+      return `${phase}${symbol}${count} ${percent ? `${percent}%` : ''}`
     }
+  },
+  beforeDestroy () {
+    this.clearPollTimer()
   },
   methods: {
     resetParams () {
@@ -400,6 +433,57 @@ export default {
       }
       this.$set(this.strategyForm, 'indicator_params', { ...(defaults[value] || defaults.ma_momentum) })
     },
+    clearPollTimer () {
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer)
+        this.pollTimer = null
+      }
+    },
+    applyScreenerResult (data) {
+      this.items = data.items || []
+      this.summary = data
+      this.selectedRowKeys = this.items.filter(item => item.decision === 'paper_trade').map(item => item.symbol)
+      if (!this.items.length) this.$message.warning('没有筛选出可展示结果')
+    },
+    schedulePoll () {
+      this.clearPollTimer()
+      this.pollTimer = setTimeout(() => {
+        this.pollScreenerJob()
+      }, 2000)
+    },
+    async pollScreenerJob () {
+      if (!this.currentJobId) return
+      try {
+        const res = await getCNStockScreenerJob(this.currentJobId)
+        if (res.code !== 1) {
+          throw new Error(res.msg || '任务查询失败')
+        }
+        const data = res.data || {}
+        this.jobStatus = data.status || ''
+        this.jobProgress = data.progress || {}
+        if (data.status === 'succeeded') {
+          this.applyScreenerResult(data.result || {})
+          this.loading = false
+          this.clearPollTimer()
+          this.currentJobId = ''
+          this.$message.success('分析完成')
+          return
+        }
+        if (data.status === 'failed' || data.status === 'cancelled') {
+          this.loading = false
+          this.clearPollTimer()
+          this.currentJobId = ''
+          this.$message.error(data.error || '分析任务失败')
+          return
+        }
+        this.schedulePoll()
+      } catch (e) {
+        this.loading = false
+        this.clearPollTimer()
+        this.currentJobId = ''
+        this.$message.error(e.message || '任务查询失败')
+      }
+    },
     buildCreatePayload (startImmediately) {
       const indicatorParams = { ...(this.strategyForm.indicator_params || {}) }
       const tradingConfig = {
@@ -435,22 +519,29 @@ export default {
       }
     },
     async runScreener () {
+      this.clearPollTimer()
       this.loading = true
       this.selectedRowKeys = []
+      this.currentJobId = ''
+      this.jobStatus = ''
+      this.jobProgress = {}
       try {
         const res = await runCNStockScreener({ ...this.form })
         if (res.code === 1) {
           const data = res.data || {}
-          this.items = data.items || []
-          this.summary = data
-          this.selectedRowKeys = this.items.filter(item => item.decision === 'paper_trade').map(item => item.symbol)
-          if (!this.items.length) this.$message.warning('没有筛选出可展示结果')
+          this.currentJobId = data.job_id || ''
+          this.jobStatus = data.status || 'queued'
+          this.jobProgress = { phase: 'queued', percent: 1 }
+          if (!this.currentJobId) {
+            throw new Error('任务提交成功但未返回 job_id')
+          }
+          this.schedulePoll()
         } else {
           this.$message.error(res.msg || '分析失败')
+          this.loading = false
         }
       } catch (e) {
         this.$message.error(e.message || '分析失败')
-      } finally {
         this.loading = false
       }
     },

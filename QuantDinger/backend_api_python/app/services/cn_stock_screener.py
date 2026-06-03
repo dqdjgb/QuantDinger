@@ -114,6 +114,7 @@ class CNStockScreenerService:
         ai_top_n: int = DEFAULT_AI_TOP_N,
         strategy_feedback_days: int = DEFAULT_FEEDBACK_DAYS,
         factors: Optional[Dict[str, Any]] = None,
+        on_progress: Any = None,
     ) -> Dict[str, Any]:
         """Run rule-first screening and optional AI enrichment."""
         tf = (timeframe or DEFAULT_TIMEFRAME).strip() or DEFAULT_TIMEFRAME
@@ -127,7 +128,24 @@ class CNStockScreenerService:
         strategy_feedback_days = max(1, min(int(feedback_days_raw), 365))
         factors = factors or {}
 
+        def progress(phase: str, **extra: Any) -> None:
+            if not callable(on_progress):
+                return
+            snapshot = {
+                "phase": phase,
+                "candidate_limit": candidate_limit,
+                "top_n": top_n,
+                "ai_top_n": ai_top_n,
+                **extra,
+            }
+            try:
+                on_progress(snapshot)
+            except Exception as exc:
+                logger.debug("CNStock screener progress callback failed: %s", exc)
+
+        progress("loading_candidates", percent=2)
         candidates = self.get_candidates(user_id=user_id, limit=candidate_limit)
+        progress("loading_feedback", percent=5, candidate_count=len(candidates))
         feedback_by_symbol = self.get_strategy_feedback(
             user_id=user_id,
             days=strategy_feedback_days,
@@ -135,8 +153,18 @@ class CNStockScreenerService:
 
         items: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
-        for candidate in candidates:
+        total_candidates = max(1, len(candidates))
+        for idx, candidate in enumerate(candidates, start=1):
             symbol = candidate.get("symbol") or ""
+            progress(
+                "scoring",
+                percent=5 + int(idx / total_candidates * 55),
+                current_symbol=symbol,
+                processed_count=idx - 1,
+                candidate_count=len(candidates),
+                scored_count=len(items),
+                skipped_count=len(skipped),
+            )
             try:
                 klines = self.kline_service.get_kline("CNStock", symbol, tf, 90) or []
                 scored = self.score_candidate(
@@ -149,6 +177,15 @@ class CNStockScreenerService:
             except Exception as exc:
                 logger.warning("CNStock screener skipped %s: %s", symbol, exc)
                 skipped.append({"symbol": symbol, "name": candidate.get("name") or "", "reason": str(exc)})
+            progress(
+                "scoring",
+                percent=5 + int(idx / total_candidates * 55),
+                current_symbol=symbol,
+                processed_count=idx,
+                candidate_count=len(candidates),
+                scored_count=len(items),
+                skipped_count=len(skipped),
+            )
 
         items.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
         if bool(factors.get("include_enrichment")):
@@ -158,19 +195,44 @@ class CNStockScreenerService:
                 MAX_ENRICHMENT_TOP_N,
             )
             if enrichment_top_n > 0:
+                progress("enrichment", percent=65, enrichment_top_n=int(enrichment_top_n))
                 self.apply_market_enrichment(items[:int(enrichment_top_n)])
             items.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
 
         ai_targets = items[:ai_top_n]
-        for item in ai_targets:
+        total_ai = max(1, len(ai_targets))
+        for idx, item in enumerate(ai_targets, start=1):
+            progress(
+                "ai_analysis",
+                percent=70 + int((idx - 1) / total_ai * 25),
+                current_symbol=item.get("symbol"),
+                ai_processed_count=idx - 1,
+                ai_total_count=len(ai_targets),
+            )
             self.apply_ai_analysis(item=item, timeframe=tf, user_id=user_id)
             self.finalize_decision(item)
+            progress(
+                "ai_analysis",
+                percent=70 + int(idx / total_ai * 25),
+                current_symbol=item.get("symbol"),
+                ai_processed_count=idx,
+                ai_total_count=len(ai_targets),
+            )
 
         for item in items[ai_top_n:]:
             self.finalize_decision(item)
 
         result_items = items[:top_n]
         executable = [x for x in result_items if x.get("decision") == "paper_trade"]
+        progress(
+            "completed",
+            percent=100,
+            candidate_count=len(candidates),
+            scored_count=len(items),
+            skipped_count=len(skipped),
+            ai_analyzed_count=len(ai_targets),
+            executable_count=len(executable),
+        )
 
         return {
             "market": "CNStock",

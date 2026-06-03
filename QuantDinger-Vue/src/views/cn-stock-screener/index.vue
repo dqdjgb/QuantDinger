@@ -97,10 +97,10 @@
           <a-input-number v-model="strategyForm.decide_interval" :min="60" :step="60" />
         </a-form-item>
         <a-form-item label="单次仓位%">
-          <a-input-number v-model="strategyForm.position_pct" :min="1" :max="100" :step="1" />
+          <a-input-number v-model="strategyForm.position_pct" :min="0" :max="100" :step="0.1" />
         </a-form-item>
         <a-form-item label="最大仓位%">
-          <a-input-number v-model="strategyForm.max_position_pct" :min="1" :max="100" :step="1" />
+          <a-input-number v-model="strategyForm.max_position_pct" :min="0" :max="100" :step="0.1" />
         </a-form-item>
         <a-form-item label="止盈%">
           <a-input-number v-model="strategyForm.take_profit_pct" :min="0" :max="100" :step="0.5" />

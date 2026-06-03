@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.data.market_symbols_seed import get_all_symbols, get_hot_symbols, get_symbol_name
+from app.services.capital_pool import get_strategy_total_capital
 from app.services.kline import KlineService
 from app.services.strategy import StrategyService
 from app.utils.db import get_db_connection
@@ -718,8 +719,8 @@ output = {
         )
         normalized_capital = max(100.0, _to_float(incoming_tc.get("initial_capital"), initial_capital or 10000))
         normalized_interval = max(60, int(_to_float(incoming_tc.get("decide_interval"), decide_interval or 300)))
-        position_pct = _bounded_float(incoming_tc.get("position_pct"), 20.0, 1.0, 100.0)
-        max_position_pct = _bounded_float(incoming_tc.get("max_position_pct"), 100.0, 1.0, 100.0)
+        position_pct = _bounded_float(incoming_tc.get("position_pct"), 20.0, 0.0, 100.0)
+        max_position_pct = _bounded_float(incoming_tc.get("max_position_pct"), 100.0, 0.0, 100.0)
         take_profit_pct = _bounded_float(incoming_tc.get("take_profit_pct"), 8.0, 0.0, 100.0)
         stop_loss_pct = _bounded_float(incoming_tc.get("stop_loss_pct"), 4.0, 0.0, 100.0)
         trailing_enabled = _to_bool(incoming_tc.get("trailing_enabled"), False)
@@ -727,8 +728,36 @@ output = {
         trailing_activation_pct = _bounded_float(incoming_tc.get("trailing_activation_pct"), 5.0, 0.0, 100.0)
         commission = _bounded_float(incoming_tc.get("commission"), 0.0003, 0.0, 0.1)
         slippage = _bounded_float(incoming_tc.get("slippage"), 0.0, 0.0, 0.1)
+        capital_allocation_pct = incoming_tc.get("capital_allocation_pct")
+        if capital_allocation_pct is None or capital_allocation_pct == "":
+            total_capital = get_strategy_total_capital(int(user_id))
+            if total_capital > 0:
+                capital_allocation_pct = normalized_capital / total_capital
 
         base_name = (strategy_name or "").strip() or "A股选股模拟策略"
+        payload_trading_config = {
+            "timeframe": timeframe,
+            "initial_capital": normalized_capital,
+            "leverage": 1,
+            "market_type": "spot",
+            "trade_direction": "long",
+            "entry_pct": position_pct,
+            "position_pct": position_pct,
+            "max_position_pct": max_position_pct,
+            "take_profit_pct": take_profit_pct,
+            "stop_loss_pct": stop_loss_pct,
+            "trailing_enabled": trailing_enabled,
+            "trailing_stop_pct": trailing_stop_pct,
+            "trailing_activation_pct": trailing_activation_pct,
+            "commission": commission,
+            "slippage": slippage,
+            "indicator_params": normalized_params,
+            "paper_source": "cn_stock_screener",
+            "strategy_template": strategy_template,
+        }
+        if capital_allocation_pct is not None and capital_allocation_pct != "":
+            payload_trading_config["capital_allocation_pct"] = capital_allocation_pct
+
         payload = {
             "user_id": int(user_id),
             "strategy_name": base_name,
@@ -738,26 +767,7 @@ output = {
             "strategy_mode": "signal",
             "symbols": [f"CNStock:{s}" for s in symbols],
             "decide_interval": normalized_interval,
-            "trading_config": {
-                "timeframe": timeframe,
-                "initial_capital": normalized_capital,
-                "leverage": 1,
-                "market_type": "spot",
-                "trade_direction": "long",
-                "entry_pct": position_pct,
-                "position_pct": position_pct,
-                "max_position_pct": max_position_pct,
-                "take_profit_pct": take_profit_pct,
-                "stop_loss_pct": stop_loss_pct,
-                "trailing_enabled": trailing_enabled,
-                "trailing_stop_pct": trailing_stop_pct,
-                "trailing_activation_pct": trailing_activation_pct,
-                "commission": commission,
-                "slippage": slippage,
-                "indicator_params": normalized_params,
-                "paper_source": "cn_stock_screener",
-                "strategy_template": strategy_template,
-            },
+            "trading_config": payload_trading_config,
             "exchange_config": {},
             "notification_config": {},
             "indicator_config": {

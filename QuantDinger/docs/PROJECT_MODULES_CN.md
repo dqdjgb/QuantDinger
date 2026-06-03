@@ -330,6 +330,8 @@ A 股筛选页批量创建的是 `CNStock` + `paper` + `spot` + `long` 的指标
 
 A 股筛选接口 `/api/cn-stock-screener/run` 采用异步任务模式：提交后立即返回 `job_id`，前端通过 `/api/cn-stock-screener/jobs/<job_id>` 轮询任务状态、进度和最终结果。任务后台执行规则评分、可选增强数据和 FastAnalysis AI 分析；`candidate_limit`、`ai_top_n` 和 `enrichment_top_n` 仍按服务端上限约束，`sync_ai=false` 时只做规则筛选。
 
+A 股筛选候选合并会先把 `SH603618`、`603618.SH`、`CNStock:SH603618` 等格式统一为 6 位代码，再用于去重、评分、AI 分析、策略反馈匹配和纸面策略创建，避免自选股与种子池中的同一股票重复出现。
+
 ## 9. 测试与验证
 
 后端测试：

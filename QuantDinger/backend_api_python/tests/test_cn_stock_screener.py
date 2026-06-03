@@ -106,6 +106,25 @@ def test_get_candidates_prioritizes_watchlist_and_limits(monkeypatch):
     assert result[0]["source"] == "watchlist"
 
 
+def test_get_candidates_dedupes_cnstock_exchange_prefixes(monkeypatch):
+    monkeypatch.setattr(mod, "get_db_connection", lambda: _FakeDb([
+        {"symbol": "603618", "name": "杭电股份"},
+    ]))
+    monkeypatch.setattr(mod, "get_hot_symbols", lambda market, limit: [])
+    monkeypatch.setattr(mod, "get_all_symbols", lambda market: [
+        {"symbol": "SH603618", "name": "杭电股份", "sort_order": 100},
+        {"symbol": "603618.SH", "name": "杭电股份", "sort_order": 99},
+        {"symbol": "SZ000001", "name": "平安银行", "sort_order": 98},
+    ])
+
+    service = CNStockScreenerService(kline_service=_FakeKline({}))
+    result = service.get_candidates(user_id=7, limit=5)
+
+    assert [r["symbol"] for r in result] == ["603618", "000001"]
+    assert result[0]["source"] == "watchlist"
+    assert result[1]["source"] == "seed"
+
+
 def test_run_skips_insufficient_kline_and_only_ai_analyzes_top_n(monkeypatch):
     rows = {
         "600519": _klines(start=10, step=0.3),
@@ -285,6 +304,28 @@ def test_create_paper_strategies_forces_cnstock_paper_payload(monkeypatch):
     assert payload["trading_config"]["market_type"] == "spot"
     assert payload["trading_config"]["trade_direction"] == "long"
     assert payload["trading_config"]["initial_capital"] == 20000
+
+
+def test_create_paper_strategies_normalizes_cnstock_prefixed_symbols(monkeypatch):
+    monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
+    strategy_service = _FakeStrategyService()
+    service = CNStockScreenerService(
+        kline_service=_FakeKline({}),
+        strategy_service=strategy_service,
+    )
+
+    service.create_paper_strategies(
+        user_id=7,
+        items=[{"symbol": "SH603618"}, {"symbol": "000001.SZ"}, {"symbol": "CNStock:BJ430047"}],
+        strategy_name="normalize symbols",
+        initial_capital=20000,
+    )
+
+    assert strategy_service.payload["symbols"] == [
+        "CNStock:603618",
+        "CNStock:000001",
+        "CNStock:430047",
+    ]
 
 
 def test_create_paper_strategies_derives_capital_allocation_from_pool(monkeypatch):

@@ -303,7 +303,8 @@ def test_create_paper_strategies_forces_cnstock_paper_payload(monkeypatch):
     assert payload["symbols"] == ["CNStock:600519", "CNStock:000001"]
     assert payload["trading_config"]["market_type"] == "spot"
     assert payload["trading_config"]["trade_direction"] == "long"
-    assert payload["trading_config"]["initial_capital"] == 20000
+    assert payload["trading_config"]["shared_capital_pool"] is True
+    assert payload["trading_config"]["initial_capital"] == 100000
 
 
 def test_create_paper_strategies_normalizes_cnstock_prefixed_symbols(monkeypatch):
@@ -328,7 +329,7 @@ def test_create_paper_strategies_normalizes_cnstock_prefixed_symbols(monkeypatch
     ]
 
 
-def test_create_paper_strategies_derives_capital_allocation_from_pool(monkeypatch):
+def test_create_paper_strategies_uses_shared_capital_pool(monkeypatch):
     monkeypatch.setattr(mod, "get_strategy_total_capital", lambda user_id: 100000)
     strategy_service = _FakeStrategyService()
     service = CNStockScreenerService(
@@ -344,8 +345,9 @@ def test_create_paper_strategies_derives_capital_allocation_from_pool(monkeypatc
     )
 
     payload = strategy_service.payload
-    assert payload["trading_config"]["initial_capital"] == 20000
-    assert payload["trading_config"]["capital_allocation_pct"] == 0.2
+    assert payload["trading_config"]["shared_capital_pool"] is True
+    assert payload["trading_config"]["initial_capital"] == 100000
+    assert "capital_allocation_pct" not in payload["trading_config"]
 
 
 def test_create_paper_strategies_defaults_to_auto_position_sizing(monkeypatch):
@@ -455,3 +457,20 @@ def test_strategy_batch_create_applies_symbol_trading_config_overrides(monkeypat
     assert created_payloads[1]["trading_config"]["symbol"] == "000001"
     assert created_payloads[1]["trading_config"]["entry_pct"] == 12
     assert "symbol_trading_configs" not in created_payloads[0]["trading_config"]
+
+
+def test_strategy_resolve_capital_allows_shared_pool(monkeypatch):
+    import app.services.strategy as strategy_mod
+
+    monkeypatch.setattr(strategy_mod, "get_strategy_total_capital", lambda user_id: 100000)
+    service = StrategyService()
+
+    initial_capital, allocation_pct, trading_config = service._resolve_capital_fields(
+        7,
+        {"shared_capital_pool": True},
+    )
+
+    assert initial_capital == 100000
+    assert allocation_pct == 0.0
+    assert trading_config["strategy_total_capital"] == 100000
+    assert trading_config["capital_allocation_pct"] == 0.0

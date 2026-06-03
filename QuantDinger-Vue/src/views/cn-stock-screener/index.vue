@@ -97,20 +97,8 @@
             <a-select-option value="1W">1W</a-select-option>
           </a-select>
         </a-form-item>
-        <a-form-item label="资金">
-          <a-input-number v-model="strategyForm.initial_capital" :min="100" :step="1000" />
-        </a-form-item>
         <a-form-item label="决策间隔秒">
           <a-input-number v-model="strategyForm.decide_interval" :min="60" :step="60" />
-        </a-form-item>
-        <a-form-item label="自动买入比例">
-          <a-checkbox v-model="strategyForm.auto_position_size" />
-        </a-form-item>
-        <a-form-item v-if="!strategyForm.auto_position_size" label="默认买入比例%">
-          <a-input-number v-model="strategyForm.position_pct" :min="0" :max="100" :step="0.1" />
-        </a-form-item>
-        <a-form-item label="最大仓位%">
-          <a-input-number v-model="strategyForm.max_position_pct" :min="0" :max="100" :step="0.1" />
         </a-form-item>
         <a-form-item label="止盈%">
           <a-input-number v-model="strategyForm.take_profit_pct" :min="0" :max="100" :step="0.5" />
@@ -293,11 +281,7 @@ export default {
         strategy_type: 'IndicatorStrategy',
         strategy_template: 'ma_momentum',
         timeframe: '1D',
-        initial_capital: 10000,
         decide_interval: 300,
-        auto_position_size: true,
-        position_pct: null,
-        max_position_pct: 100,
         take_profit_pct: 8,
         stop_loss_pct: 4,
         trailing_enabled: false,
@@ -406,11 +390,7 @@ export default {
         strategy_type: 'IndicatorStrategy',
         strategy_template: 'ma_momentum',
         timeframe: '1D',
-        initial_capital: 10000,
         decide_interval: 300,
-        auto_position_size: true,
-        position_pct: null,
-        max_position_pct: 100,
         take_profit_pct: 8,
         stop_loss_pct: 4,
         trailing_enabled: false,
@@ -488,10 +468,7 @@ export default {
       const indicatorParams = { ...(this.strategyForm.indicator_params || {}) }
       const tradingConfig = {
         timeframe: this.strategyForm.timeframe || this.form.timeframe || '1D',
-        initial_capital: this.strategyForm.initial_capital || 10000,
         decide_interval: this.strategyForm.decide_interval || 300,
-        position_sizing_mode: this.strategyForm.auto_position_size ? 'auto' : 'fixed_pct',
-        max_position_pct: this.strategyForm.max_position_pct,
         take_profit_pct: this.strategyForm.take_profit_pct,
         stop_loss_pct: this.strategyForm.stop_loss_pct,
         trailing_enabled: !!this.strategyForm.trailing_enabled,
@@ -501,17 +478,12 @@ export default {
         slippage: this.strategyForm.slippage,
         indicator_params: indicatorParams
       }
-      if (!this.strategyForm.auto_position_size && this.strategyForm.position_pct !== null && this.strategyForm.position_pct !== undefined && this.strategyForm.position_pct !== '') {
-        tradingConfig.entry_pct = this.strategyForm.position_pct
-        tradingConfig.position_pct = this.strategyForm.position_pct
-      }
       return {
         items: this.selectedExecutable,
         strategy_name: this.strategyForm.strategy_name || 'A股选股模拟策略',
         strategy_type: this.strategyForm.strategy_type || 'IndicatorStrategy',
         strategy_template: this.strategyForm.strategy_template || 'ma_momentum',
         timeframe: this.strategyForm.timeframe || this.form.timeframe || '1D',
-        initial_capital: this.strategyForm.initial_capital || 10000,
         decide_interval: this.strategyForm.decide_interval || 300,
         indicator_params: indicatorParams,
         trading_config: tradingConfig,

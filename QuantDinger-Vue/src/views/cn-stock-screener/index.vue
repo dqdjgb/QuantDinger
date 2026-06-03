@@ -96,7 +96,10 @@
         <a-form-item label="决策间隔秒">
           <a-input-number v-model="strategyForm.decide_interval" :min="60" :step="60" />
         </a-form-item>
-        <a-form-item label="单次仓位%">
+        <a-form-item label="自动买入比例">
+          <a-checkbox v-model="strategyForm.auto_position_size" />
+        </a-form-item>
+        <a-form-item v-if="!strategyForm.auto_position_size" label="默认买入比例%">
           <a-input-number v-model="strategyForm.position_pct" :min="0" :max="100" :step="0.1" />
         </a-form-item>
         <a-form-item label="最大仓位%">
@@ -281,7 +284,8 @@ export default {
         timeframe: '1D',
         initial_capital: 10000,
         decide_interval: 300,
-        position_pct: 20,
+        auto_position_size: true,
+        position_pct: null,
         max_position_pct: 100,
         take_profit_pct: 8,
         stop_loss_pct: 4,
@@ -371,7 +375,8 @@ export default {
         timeframe: '1D',
         initial_capital: 10000,
         decide_interval: 300,
-        position_pct: 20,
+        auto_position_size: true,
+        position_pct: null,
         max_position_pct: 100,
         take_profit_pct: 8,
         stop_loss_pct: 4,
@@ -397,6 +402,25 @@ export default {
     },
     buildCreatePayload (startImmediately) {
       const indicatorParams = { ...(this.strategyForm.indicator_params || {}) }
+      const tradingConfig = {
+        timeframe: this.strategyForm.timeframe || this.form.timeframe || '1D',
+        initial_capital: this.strategyForm.initial_capital || 10000,
+        decide_interval: this.strategyForm.decide_interval || 300,
+        position_sizing_mode: this.strategyForm.auto_position_size ? 'auto' : 'fixed_pct',
+        max_position_pct: this.strategyForm.max_position_pct,
+        take_profit_pct: this.strategyForm.take_profit_pct,
+        stop_loss_pct: this.strategyForm.stop_loss_pct,
+        trailing_enabled: !!this.strategyForm.trailing_enabled,
+        trailing_stop_pct: this.strategyForm.trailing_stop_pct,
+        trailing_activation_pct: this.strategyForm.trailing_activation_pct,
+        commission: this.strategyForm.commission,
+        slippage: this.strategyForm.slippage,
+        indicator_params: indicatorParams
+      }
+      if (!this.strategyForm.auto_position_size && this.strategyForm.position_pct !== null && this.strategyForm.position_pct !== undefined && this.strategyForm.position_pct !== '') {
+        tradingConfig.entry_pct = this.strategyForm.position_pct
+        tradingConfig.position_pct = this.strategyForm.position_pct
+      }
       return {
         items: this.selectedExecutable,
         strategy_name: this.strategyForm.strategy_name || 'A股选股模拟策略',
@@ -406,22 +430,7 @@ export default {
         initial_capital: this.strategyForm.initial_capital || 10000,
         decide_interval: this.strategyForm.decide_interval || 300,
         indicator_params: indicatorParams,
-        trading_config: {
-          timeframe: this.strategyForm.timeframe || this.form.timeframe || '1D',
-          initial_capital: this.strategyForm.initial_capital || 10000,
-          decide_interval: this.strategyForm.decide_interval || 300,
-          entry_pct: this.strategyForm.position_pct,
-          position_pct: this.strategyForm.position_pct,
-          max_position_pct: this.strategyForm.max_position_pct,
-          take_profit_pct: this.strategyForm.take_profit_pct,
-          stop_loss_pct: this.strategyForm.stop_loss_pct,
-          trailing_enabled: !!this.strategyForm.trailing_enabled,
-          trailing_stop_pct: this.strategyForm.trailing_stop_pct,
-          trailing_activation_pct: this.strategyForm.trailing_activation_pct,
-          commission: this.strategyForm.commission,
-          slippage: this.strategyForm.slippage,
-          indicator_params: indicatorParams
-        },
+        trading_config: tradingConfig,
         start_immediately: startImmediately
       }
     },
